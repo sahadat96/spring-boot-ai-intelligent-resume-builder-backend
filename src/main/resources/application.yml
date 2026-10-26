@@ -1,0 +1,17 @@
+server:
+  port: ${PORT:6000}
+
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/ai_intelligent_backend}
+    username: ${DATABASE_USER:backend_dev}
+    password: ${DATABASE_PASSWORD:12345678}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_SIZE:10}
+      connection-timeout: 5000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
