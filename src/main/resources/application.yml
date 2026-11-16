@@ -1,10 +1,10 @@
 server:
-  port: ${PORT:6000}
+  port: ${PORT:8080}
 
 spring:
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/ai_intelligent_backend}
-    username: ${DATABASE_USER:backend_dev}
+    username: ${DATABASE_USER:sahadat}
     password: ${DATABASE_PASSWORD:12345678}
     hikari:
       maximum-pool-size: ${DATABASE_POOL_SIZE:10}
