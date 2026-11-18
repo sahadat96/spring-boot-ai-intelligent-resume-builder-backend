@@ -14,8 +14,8 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    schemas: identity
-    default-schema: identity
+    schemas: platform
+    default-schema: platform
     create-schemas: true
 
   jpa:
