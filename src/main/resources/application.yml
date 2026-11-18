@@ -14,7 +14,7 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    schemas: platform, identity, account, billing, document, resume
+    schemas: platform, identity, account, billing, document, resume, ai
     default-schema: platform
     create-schemas: true
 
