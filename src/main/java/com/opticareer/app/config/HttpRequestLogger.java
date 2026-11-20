@@ -1,4 +1,4 @@
-package com.sahadat.resumebuilder.config;
+package com.opticareer.app.config;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
