@@ -1,5 +1,6 @@
 package com.opticareer.app.modules.identity.application;
 
+import com.opticareer.app.modules.account.AccountApi;
 import com.opticareer.app.modules.identity.IdentityApi;
 import com.opticareer.app.modules.identity.domain.*;
 import com.opticareer.app.platform.config.AppProperties;
@@ -15,6 +16,7 @@ import java.time.*;
 import java.util.*;
 
 import org.apache.commons.codec.binary.Base32;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -31,6 +33,7 @@ public class IdentityService  {
   private final JobQueue jobs;
   private final EventPublisher events;
   private final TransactionTemplate tx;
+  private final AccountApi accounts;
   private final SecureRandom random = new SecureRandom();
   private final String dummyHash;
   private final IdentityPorts.LoginLimits loginLimits;
@@ -39,14 +42,15 @@ public class IdentityService  {
       IdentityPorts.LoginLimits loginLimits,
       IdentityRepository repository,
       IdentityPorts.Passwords passwords,
-      IdentityPorts.Tokens tokens,
-      IdentityPorts.Google google,
+      @Nullable IdentityPorts.Tokens tokens,
+      @Nullable IdentityPorts.Google google,
       AppProperties properties,
       FieldCipher cipher,
       Clock clock,
       JobQueue jobs,
       EventPublisher events,
-      TransactionTemplate tx) {
+      TransactionTemplate tx,
+      AccountApi accounts) {
     this.loginLimits = loginLimits;
     this.repository = repository;
     this.passwords = passwords;
@@ -58,23 +62,31 @@ public class IdentityService  {
     this.jobs = jobs;
     this.events = events;
     this.tx = tx;
+    this.accounts = accounts;
     dummyHash = passwords.hash("timing-only-dummy-secret");
   }
 
-  public void register(String email, String password) {
+  public void register(String fullName, String email, String password) {
+    if (fullName == null || fullName.strip().length() < 2 || fullName.strip().length() > 150) {
+      throw DomainException.invalid("Provide a full name between 2 and 150 characters.");
+    }
+    String cleanName = fullName.strip();
     PasswordPolicy.validate(password);
     passwords.checkBreached(password);
     String hash = passwords.hash(password);
     String normalized = email.toLowerCase(Locale.ROOT).strip();
     tx.executeWithoutResult(
         status -> {
-            repository.lockEmail(normalized);
-            UUID owner = UuidV7.next();
-            var existing = repository.byEmail(normalized);
-            if (existing.isPresent()) return;
-            repository.create(new User(owner, normalized, hash, null, "ACTIVE"));
-            emailToken(owner, normalized, "VERIFY");
-            events.publish(owner, "UserRegistered", Map.of());
+          repository.lockEmail(normalized);
+          UUID owner = UuidV7.next();
+          var existing = repository.byEmail(normalized);
+          if (existing.isPresent()) return;
+          repository.create(new User(owner, normalized, hash, null, "ACTIVE"));
+          if (accounts != null) {
+            accounts.initializeProfile(owner, cleanName);
+          }
+          emailToken(owner, normalized, "VERIFY");
+          events.publish(owner, "UserRegistered", Map.of("fullName", cleanName));
         });
   }
 

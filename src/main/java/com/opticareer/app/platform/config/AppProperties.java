@@ -12,7 +12,7 @@ public record AppProperties(
     @NotBlank String corsOrigins,
     @Valid Security security,
     @Valid Storage storage,
-    @Valid Ai ai,
+    @Valid Ai ai, 
     @Valid Stripe stripe,
     @Valid Worker worker,
     @NotBlank String mailFrom) {

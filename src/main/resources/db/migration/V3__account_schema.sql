@@ -2,6 +2,7 @@ CREATE SCHEMA IF NOT EXISTS account;
 
 CREATE TABLE account.user_profiles (
   user_id         UUID PRIMARY KEY,
+  full_name       VARCHAR(150) NOT NULL DEFAULT '',
   first_name      VARCHAR(100) NOT NULL DEFAULT '',
   last_name       VARCHAR(100) NOT NULL DEFAULT '',
   headline        VARCHAR(200) NOT NULL DEFAULT '',

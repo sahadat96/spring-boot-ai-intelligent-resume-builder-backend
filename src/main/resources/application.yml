@@ -1,5 +1,8 @@
 server:
   port: ${PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
 
 spring:
   datasource:
@@ -24,3 +27,67 @@ spring:
       ddl-auto: validate
     properties:
       hibernate.jdbc.time_zone: UTC
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operationsSorter: alpha
+    tagsSorter: alpha
+
+app:
+  public-url: ${PUBLIC_URL:http://localhost:5173}
+  cors-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:8080}
+  mail-from: ${MAIL_FROM:no-reply@opticareer.com}
+  security:
+    jwt-key: ${JWT_KEY:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+    encryption-key: ${ENCRYPTION_KEY:YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk=}
+    encryption-key-id: ${ENCRYPTION_KEY_ID:v1}
+    cookie-secure: ${COOKIE_SECURE:false}
+    issuer: ${JWT_ISSUER:opticareer}
+    google-client-id: ${GOOGLE_CLIENT_ID:}
+    access-minutes: 10
+    refresh-days: 14
+    breached-password-check: ${BREACHED_PASSWORD_CHECK:false}
+  storage:
+    endpoint: ${STORAGE_ENDPOINT:http://localhost:9000}
+    region: ${STORAGE_REGION:us-east-1}
+    bucket: ${STORAGE_BUCKET:opticareer}
+    access-key: ${STORAGE_ACCESS_KEY:opticareer-dev}
+    secret-key: ${STORAGE_SECRET_KEY:opticareer-dev-only-password}
+    signed-url-minutes: 5
+    scan-host: ${SCAN_HOST:localhost}
+    scan-port: ${SCAN_PORT:3310}
+    scan-required: false
+  ai:
+    url: ${AI_URL:https://api.openai.com/v1}
+    api-key: ${AI_API_KEY:}
+    model: ${AI_MODEL:gpt-4o}
+    timeout-seconds: 30
+    max-concurrent: 4
+    daily-token-limit: 1000000
+    enabled: ${AI_ENABLED:false}
+  stripe:
+    api-key: ${STRIPE_API_KEY:}
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+    base-url: ${STRIPE_BASE_URL:https://api.stripe.com}
+    pro-monthly: ${STRIPE_PRICE_PRO_MONTHLY:}
+    pro-six-month: ${STRIPE_PRICE_PRO_SIX_MONTH:}
+    plus-monthly: ${STRIPE_PRICE_PLUS_MONTHLY:}
+    plus-six-month: ${STRIPE_PRICE_PLUS_SIX_MONTH:}
+    enabled: ${STRIPE_ENABLED:false}
+  worker:
+    enabled: ${WORKER_ENABLED:true}
+    poll-ms: 1000
+    max-attempts: 5
+    lease-seconds: 120
