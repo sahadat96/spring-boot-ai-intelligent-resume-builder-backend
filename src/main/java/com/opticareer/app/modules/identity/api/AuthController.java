@@ -2,133 +2,314 @@ package com.opticareer.app.modules.identity.api;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.opticareer.app.modules.identity.application.IdentityService;
+import com.opticareer.app.platform.config.AppProperties;
+import com.opticareer.app.shared.error.DomainException;
+import com.opticareer.app.shared.error.ErrorCode;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseCookie;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.web.bind.annotation.*;
 
-@Tag(name = "Authentication", description = "Endpoints for user authentication, registration, and credential management")
+@Tag(name = "Authentication", description = "Endpoints for user authentication, OTP verification, password reset, and session management")
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api/v1/auth")
 public class AuthController {
 
   private final IdentityService service;
+  private final AppProperties properties;
 
   public AuthController(IdentityService service) {
-    this.service = service;
+    this(service, null);
   }
 
-  @Schema(
-      name = "RegisterRequest",
-      description = "User registration payload containing full name, email address, and secure password")
+  @Autowired
+  public AuthController(IdentityService service, AppProperties properties) {
+    this.service = service;
+    this.properties = properties;
+  }
+
+  // --- Registration & Verification DTOs ---
+
+  @Schema(name = "RegisterRequest", description = "User registration payload containing full name, email, and password")
   public record Register(
-      @JsonProperty("fullName")
-      @Schema(
-          name = "fullName",
-          description = "User's full name as displayed across their profile and resumes (from Figma registration form)",
-          example = "Emran Hossain",
-          requiredMode = Schema.RequiredMode.REQUIRED,
-          minLength = 2,
-          maxLength = 150)
-      @NotBlank
-      @Size(min = 2, max = 150)
-      String fullName,
+      @Schema(description = "User's full name", example = "Emran Hossain", requiredMode = Schema.RequiredMode.REQUIRED, minLength = 2, maxLength = 150)
+      @NotBlank @Size(min = 2, max = 150) String fullName,
 
-      @JsonProperty("email")
-      @Schema(
-          name = "email",
-          description = "User email address used for account identity and verification",
-          example = "candidate@example.com",
-          requiredMode = Schema.RequiredMode.REQUIRED,
-          maxLength = 254)
-      @NotBlank
-      @Email
-      @Size(max = 254)
-      String email,
+      @Schema(description = "User email address", example = "candidate@example.com", requiredMode = Schema.RequiredMode.REQUIRED, maxLength = 254)
+      @NotBlank @Email @Size(max = 254) String email,
 
-      @JsonProperty("password")
-      @Schema(
-          name = "password",
-          description = "Password meeting security policy (min 12, max 72 characters, >= 4 unique characters, non-breached)",
-          example = "CorrectHorseBatteryStaple123!",
-          requiredMode = Schema.RequiredMode.REQUIRED,
-          minLength = 12,
-          maxLength = 72)
-      @NotBlank
-      @Size(min = 12, max = 72)
-      String password) {}
+      @Schema(description = "Password meeting security criteria (min 12, max 72 characters)", example = "CorrectHorseBatteryStaple123!", requiredMode = Schema.RequiredMode.REQUIRED, minLength = 12, maxLength = 72)
+      @NotBlank @Size(min = 12, max = 72) String password) {}
 
-  @Schema(
-      name = "RegisterResponse",
-      description = "Acknowledgment response returned when registration is accepted")
+  @Schema(name = "RegisterResponse", description = "Acknowledgment response returned when registration is accepted")
   public record RegisterResponse(
-      @JsonProperty("message")
-      @Schema(
-          name = "message",
-          description = "Informational status message",
-          example = "If registration can proceed, check your email.")
+      @Schema(description = "Informational status message", example = "If registration can proceed, check your email.")
       String message) {}
+
+  @Schema(name = "VerifyOtpRequest", description = "Payload to verify a 6-digit OTP code or verification token")
+  public record VerifyOtpRequest(
+      @Schema(description = "User email address", example = "candidate@example.com")
+      @Email @Size(max = 254) String email,
+
+      @Schema(description = "6-digit numeric OTP code received via email", example = "482910")
+      @Pattern(regexp = "^[0-9]{6}$", message = "OTP must be exactly 6 digits") String otp,
+
+      @Schema(description = "Optional verification token string (if using link-based verification)", example = "a1b2c3d4...")
+      String token) {}
+
+  @Schema(name = "EmailRequest", description = "Payload specifying user email for code dispatch")
+  public record EmailRequest(
+      @Schema(description = "User email address", example = "candidate@example.com", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Email @Size(max = 254) String email) {}
+
+  @Schema(name = "ResetPasswordRequest", description = "Payload to reset account password using 6-digit OTP or reset token")
+  public record ResetPasswordRequest(
+      @Schema(description = "User email address", example = "candidate@example.com")
+      @Email @Size(max = 254) String email,
+
+      @Schema(description = "6-digit numeric reset OTP code received via email", example = "839201")
+      String otp,
+
+      @Schema(description = "Optional reset token string", example = "token_abc123")
+      String token,
+
+      @Schema(description = "New secure password meeting security policy", example = "NewStrongPassword456!", requiredMode = Schema.RequiredMode.REQUIRED, minLength = 12, maxLength = 72)
+      @NotBlank @Size(min = 12, max = 72) String password) {}
+
+  @Schema(name = "LoginRequest", description = "Credentials required to authenticate and obtain tokens")
+  public record LoginRequest(
+      @Schema(description = "Account email address", example = "candidate@example.com", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Email @Size(max = 254) String email,
+
+      @Schema(description = "Account password", example = "CorrectHorseBatteryStaple123!", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Size(max = 72) String password,
+
+      @Schema(description = "Optional client device description for session tracking", example = "Chrome on macOS")
+      @Size(max = 150) String deviceLabel) {}
+
+  @Schema(name = "RefreshTokenRequest", description = "Optional payload for refresh token if not using HttpOnly cookie")
+  public record RefreshTokenRequest(
+      @Schema(description = "Refresh token string", example = "dGhpcy1pcy1hLXJlZnJlc2gtdG9rZW4...")
+      String refreshToken) {}
+
+  @Schema(name = "MessageResponse", description = "Standard operational message response")
+  public record MessageResponse(
+      @Schema(description = "Status or informational message", example = "Operation completed successfully.")
+      String message) {}
+
+  @Schema(name = "AuthResponse", description = "Authentication tokens and metadata returned on successful login or refresh")
+  public record Access(
+      @Schema(description = "Signed JWT access token", example = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...")
+      String accessToken,
+
+      @Schema(description = "Token type", example = "Bearer")
+      String tokenType,
+
+      @Schema(description = "Lifetime of the access token in seconds", example = "600")
+      int expiresIn,
+
+      @Schema(description = "Unique user ID", example = "018f3a8b-1234-7000-8000-000000000001")
+      UUID userId) {}
+
+  // --- Endpoints ---
 
   @Operation(
       summary = "Register user account",
-      description = "Registers a new user with full name, email, and password. Generates a secure verification token and triggers email verification asynchronously.")
-  @io.swagger.v3.oas.annotations.parameters.RequestBody(
-      description = "User registration details including full name, email, and secure password",
-      required = true,
-      content = @Content(
-          mediaType = "application/json",
-          schema = @Schema(implementation = Register.class),
-          examples = @ExampleObject(
-              name = "DefaultRegistrationExample",
-              summary = "Standard registration request example",
-              value = "{\n  \"fullName\": \"Emran Hossain\",\n  \"email\": \"candidate@example.com\",\n  \"password\": \"CorrectHorseBatteryStaple123!\"\n}"
-          )
-      )
-  )
+      description = "Registers a new user, creates their profile, generates a secure 6-digit verification OTP, and triggers email delivery.")
   @ApiResponses({
-      @ApiResponse(
-          responseCode = "202",
-          description = "Registration accepted. Verification email sent if eligible.",
-          content = @Content(
-              mediaType = "application/json",
-              schema = @Schema(implementation = RegisterResponse.class),
-              examples = @ExampleObject(
-                  name = "AcceptedResponseExample",
-                  summary = "Registration accepted example",
-                  value = "{\n  \"message\": \"If registration can proceed, check your email.\"\n}"
-              ))),
-      @ApiResponse(
-          responseCode = "400",
-          description = "Validation failure (e.g. missing full name, invalid email format, weak password, or breached password)",
-          content = @Content(
-              mediaType = "application/problem+json",
-              examples = @ExampleObject(
-                  name = "ValidationProblemExample",
-                  summary = "Validation error example",
-                  value = "{\n  \"type\": \"about:blank\",\n  \"title\": \"Bad Request\",\n  \"status\": 400,\n  \"detail\": \"Provide a full name between 2 and 150 characters.\",\n  \"code\": \"VALIDATION_FAILED\",\n  \"errors\": [{\"field\": \"fullName\", \"message\": \"must not be blank\"}]\n}"
-              ))),
-      @ApiResponse(
-          responseCode = "503",
-          description = "Password or verification provider temporarily unavailable",
-          content = @Content(mediaType = "application/problem+json"))
+      @ApiResponse(responseCode = "202", description = "Registration accepted. Verification code dispatched via email."),
+      @ApiResponse(responseCode = "400", description = "Validation error (e.g. invalid email format, weak password).")
   })
-  @PostMapping("/auth/register")
+  @PostMapping("/register")
   @ResponseStatus(HttpStatus.ACCEPTED)
   public RegisterResponse register(@Valid @RequestBody Register r) {
     service.register(r.fullName(), r.email(), r.password());
     return new RegisterResponse("If registration can proceed, check your email.");
+  }
+
+  @Operation(
+      summary = "Verify email with 6-digit OTP",
+      description = "Verifies the user's email address using the 6-digit OTP code or verification token sent to their inbox.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Email verified successfully."),
+      @ApiResponse(responseCode = "400", description = "Invalid or expired verification code.")
+  })
+  @PostMapping({"/verify-otp", "/verify-email"})
+  public MessageResponse verifyOtp(@Valid @RequestBody VerifyOtpRequest r) {
+    String code = (r.otp() != null && !r.otp().isBlank()) ? r.otp() : r.token();
+    if (code == null || code.isBlank()) {
+      throw DomainException.invalid("Provide a 6-digit OTP or verification token.");
+    }
+    service.verifyEmail(r.email(), code);
+    return new MessageResponse("Email verified successfully. You may now sign in.");
+  }
+
+  @Operation(
+      summary = "Resend verification OTP",
+      description = "Dispatches a fresh 6-digit verification OTP to the user's email if the account is unverified.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "202", description = "Request accepted. A new code has been sent if eligible.")
+  })
+  @PostMapping({"/resend-otp", "/resend-verification"})
+  @ResponseStatus(HttpStatus.ACCEPTED)
+  public MessageResponse resendOtp(@Valid @RequestBody EmailRequest r) {
+    service.resendVerification(r.email());
+    return new MessageResponse("If verification can proceed, a new code has been sent to your email.");
+  }
+
+  @Operation(
+      summary = "Request password reset OTP",
+      description = "Dispatches a 6-digit password reset OTP to the user's email if the account exists.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "202", description = "Request accepted. Password reset code sent if the account exists.")
+  })
+  @PostMapping("/forgot-password")
+  @ResponseStatus(HttpStatus.ACCEPTED)
+  public MessageResponse forgotPassword(@Valid @RequestBody EmailRequest r) {
+    service.forgotPassword(r.email());
+    return new MessageResponse("If the account exists, check your email for the password reset code.");
+  }
+
+  @Operation(
+      summary = "Reset password with OTP",
+      description = "Resets the account password using the 6-digit OTP code received in email and invalidates all existing sessions.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Password reset successfully."),
+      @ApiResponse(responseCode = "400", description = "Invalid code or weak password.")
+  })
+  @PostMapping("/reset-password")
+  public MessageResponse resetPassword(@Valid @RequestBody ResetPasswordRequest r) {
+    String code = (r.otp() != null && !r.otp().isBlank()) ? r.otp() : r.token();
+    if (code == null || code.isBlank()) {
+      throw DomainException.invalid("Provide the 6-digit reset OTP or reset token.");
+    }
+    service.resetPassword(r.email(), code, r.password());
+    return new MessageResponse("Password reset successfully. Please sign in with your new password.");
+  }
+
+  @Operation(
+      summary = "User login",
+      description = "Authenticates user with email and password. Sets an HttpOnly refresh token cookie and returns a signed JWT access token.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Authentication successful."),
+      @ApiResponse(responseCode = "401", description = "Invalid email or password."),
+      @ApiResponse(responseCode = "403", description = "Email not verified.")
+  })
+  @PostMapping("/login")
+  public ResponseEntity<Access> login(@Valid @RequestBody LoginRequest r, HttpServletRequest request) {
+    IdentityService.AuthResult result =
+        service.login(
+            r.email(),
+            r.password(),
+            r.deviceLabel(),
+            request.getRemoteAddr(),
+            request.getHeader("User-Agent"));
+    return authResponse(result);
+  }
+
+  @Operation(
+      summary = "Refresh access token",
+      description = "Rotates the refresh token and issues a new signed JWT access token. Enforces token family reuse detection.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Token refreshed successfully."),
+      @ApiResponse(responseCode = "401", description = "Invalid, expired, or reused refresh token.")
+  })
+  @PostMapping("/refresh")
+  public ResponseEntity<Access> refresh(
+      @CookieValue(name = "refresh", required = false) String cookieToken,
+      @RequestBody(required = false) RefreshTokenRequest body) {
+    String token = (cookieToken != null && !cookieToken.isBlank())
+        ? cookieToken
+        : (body != null ? body.refreshToken() : null);
+    if (token == null || token.isBlank()) {
+      throw new DomainException(ErrorCode.INVALID_TOKEN, "Refresh token is missing.");
+    }
+    return authResponse(service.refresh(token));
+  }
+
+  @Operation(
+      summary = "Logout active session",
+      description = "Revokes the current session family and clears the HttpOnly refresh token cookie.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Logged out successfully.")
+  })
+  @PostMapping("/logout")
+  public ResponseEntity<Void> logout(
+      @CookieValue(name = "refresh", required = false) String cookieToken,
+      @RequestBody(required = false) RefreshTokenRequest body) {
+    String token = (cookieToken != null && !cookieToken.isBlank())
+        ? cookieToken
+        : (body != null ? body.refreshToken() : null);
+    service.logout(token);
+    return ResponseEntity.noContent().header(HttpHeaders.SET_COOKIE, clearCookie()).build();
+  }
+
+  @Operation(
+      summary = "Logout all devices",
+      description = "Revokes all active sessions and refresh token families for the authenticated user.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "All sessions revoked."),
+      @ApiResponse(responseCode = "401", description = "Authentication required.")
+  })
+  @PostMapping("/logout-all")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void logoutAll(
+      @Parameter(hidden = true) JwtAuthenticationToken token) {
+    if (token == null) {
+      throw new DomainException(ErrorCode.UNAUTHENTICATED, "Authentication required.");
+    }
+    service.logoutAll(UUID.fromString(token.getName()));
+  }
+
+  // --- Helper Methods ---
+
+  private ResponseEntity<Access> authResponse(IdentityService.AuthResult r) {
+    long maxAge = properties != null ? properties.security().refreshDays() * 86400L : 1209600L;
+    return ResponseEntity.ok()
+        .header(HttpHeaders.SET_COOKIE, cookie(r.refreshToken(), maxAge))
+        .header(HttpHeaders.CACHE_CONTROL, "no-store")
+        .body(new Access(r.accessToken(), "Bearer", r.expiresIn(), r.userId()));
+  }
+
+  private String cookie(String value, long age) {
+    boolean secure = properties != null && properties.security().cookieSecure();
+    return ResponseCookie.from("refresh", value)
+        .httpOnly(true)
+        .secure(secure)
+        .sameSite("Lax")
+        .path("/api/v1/auth")
+        .maxAge(age)
+        .build()
+        .toString();
+  }
+
+  private String clearCookie() {
+    boolean secure = properties != null && properties.security().cookieSecure();
+    return ResponseCookie.from("refresh", "")
+        .httpOnly(true)
+        .secure(secure)
+        .sameSite("Lax")
+        .path("/api/v1/auth")
+        .maxAge(0)
+        .build()
+        .toString();
   }
 }

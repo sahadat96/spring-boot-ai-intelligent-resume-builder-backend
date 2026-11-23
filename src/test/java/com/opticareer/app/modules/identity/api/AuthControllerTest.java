@@ -166,4 +166,148 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
         .andExpect(jsonPath("$.detail").value("Choose a less predictable password."));
   }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/verify-otp successfully verifies 6-digit OTP code")
+  void verifyOtpSuccess() throws Exception {
+    String payload = """
+        {
+          "email": "applicant@example.com",
+          "otp": "482910"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/verify-otp")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.message").value("Email verified successfully. You may now sign in."));
+
+    verify(service).verifyEmail("applicant@example.com", "482910");
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/resend-otp triggers fresh OTP generation")
+  void resendOtpSuccess() throws Exception {
+    String payload = """
+        {
+          "email": "applicant@example.com"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/resend-otp")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.message").value("If verification can proceed, a new code has been sent to your email."));
+
+    verify(service).resendVerification("applicant@example.com");
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/forgot-password dispatches password reset OTP")
+  void forgotPasswordSuccess() throws Exception {
+    String payload = """
+        {
+          "email": "applicant@example.com"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/forgot-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.message").value("If the account exists, check your email for the password reset code."));
+
+    verify(service).forgotPassword("applicant@example.com");
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/reset-password resets password using OTP")
+  void resetPasswordSuccess() throws Exception {
+    String payload = """
+        {
+          "email": "applicant@example.com",
+          "otp": "839201",
+          "password": "NewStrongPassword456!"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/reset-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.message").value("Password reset successfully. Please sign in with your new password."));
+
+    verify(service).resetPassword("applicant@example.com", "839201", "NewStrongPassword456!");
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/login returns JWT access token and sets refresh cookie")
+  void loginSuccess() throws Exception {
+    java.util.UUID userId = java.util.UUID.randomUUID();
+    when(service.login(eq("applicant@example.com"), eq("CorrectPassword123!"), eq("Chrome on macOS"), any(), any()))
+        .thenReturn(new IdentityService.AuthResult("access-jwt-token", "refresh-opaque-token", userId, 600));
+
+    String payload = """
+        {
+          "email": "applicant@example.com",
+          "password": "CorrectPassword123!",
+          "deviceLabel": "Chrome on macOS"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.accessToken").value("access-jwt-token"))
+        .andExpect(jsonPath("$.tokenType").value("Bearer"))
+        .andExpect(jsonPath("$.expiresIn").value(600))
+        .andExpect(jsonPath("$.userId").value(userId.toString()))
+        .andExpect(header().exists("Set-Cookie"));
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/refresh rotates refresh token")
+  void refreshSuccess() throws Exception {
+    java.util.UUID userId = java.util.UUID.randomUUID();
+    when(service.refresh("old-refresh-token"))
+        .thenReturn(new IdentityService.AuthResult("new-access-jwt", "new-refresh-token", userId, 600));
+
+    jakarta.servlet.http.Cookie refreshCookie = new jakarta.servlet.http.Cookie("refresh", "old-refresh-token");
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/refresh")
+                .cookie(refreshCookie))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.accessToken").value("new-access-jwt"))
+        .andExpect(header().exists("Set-Cookie"));
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/logout clears refresh cookie")
+  void logoutSuccess() throws Exception {
+    jakarta.servlet.http.Cookie refreshCookie = new jakarta.servlet.http.Cookie("refresh", "active-token");
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/logout")
+                .cookie(refreshCookie))
+        .andExpect(status().isNoContent())
+        .andExpect(header().exists("Set-Cookie"));
+
+    verify(service).logout("active-token");
+  }
 }
