@@ -3,6 +3,8 @@ package com.opticareer.app.modules.identity.api;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.opticareer.app.modules.identity.application.IdentityService;
 import com.opticareer.app.platform.config.AppProperties;
+import com.opticareer.app.platform.idempotency.Idempotent;
+import com.opticareer.app.platform.web.security.RequireRecentAuth;
 import com.opticareer.app.shared.error.DomainException;
 import com.opticareer.app.shared.error.ErrorCode;
 import io.swagger.v3.oas.annotations.Operation;
@@ -332,6 +334,7 @@ public class AuthController {
       @ApiResponse(responseCode = "401", description = "Authentication required.")
   })
   @DeleteMapping("/sessions/{id}")
+  @RequireRecentAuth(maxAgeMinutes = 15)
   public ResponseEntity<Void> revokeSession(
       @PathVariable UUID id,
       @Parameter(hidden = true) JwtAuthenticationToken token) {
@@ -351,6 +354,7 @@ public class AuthController {
       @ApiResponse(responseCode = "401", description = "Invalid password or authentication required.")
   })
   @PostMapping("/reauthenticate")
+  @Idempotent(scope = "auth-reauth", required = false)
   public ResponseEntity<MessageResponse> reauthenticate(
       @Valid @RequestBody ReauthenticateRequest req,
       @Parameter(hidden = true) JwtAuthenticationToken token) {

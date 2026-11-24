@@ -18,5 +18,11 @@ public interface IdentityApi {
 
   void reauthenticate(UUID owner, String password, String otp);
 
+  /**
+   * Verifies whether the specified user has performed step-up reauthentication
+   * within the required time window (PSD2 RTS compliance check).
+   */
+  boolean hasRecentAuth(UUID owner, java.time.Duration maxAge);
+
   record UserSummary(UUID id, String email, boolean verified, String status) {}
 }

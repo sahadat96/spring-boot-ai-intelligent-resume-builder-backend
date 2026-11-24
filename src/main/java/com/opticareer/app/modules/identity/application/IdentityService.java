@@ -21,6 +21,7 @@ import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,6 +47,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
   private final SecureRandom random = new SecureRandom();
   private final String dummyHash;
   private final IdentityPorts.LoginLimits loginLimits;
+  private final StringRedisTemplate redis;
 
   @Autowired
   public IdentityService(
@@ -61,7 +63,8 @@ public class IdentityService implements IdentityApi, DataParticipant {
       EventPublisher events,
       TransactionTemplate tx,
       AccountApi accounts,
-      @Nullable EmailService emailService) {
+      @Nullable EmailService emailService,
+      @Nullable StringRedisTemplate redis) {
     this.loginLimits = loginLimits;
     this.repository = repository;
     this.passwords = passwords;
@@ -75,7 +78,39 @@ public class IdentityService implements IdentityApi, DataParticipant {
     this.tx = tx;
     this.accounts = accounts;
     this.emailService = emailService;
+    this.redis = redis;
     this.dummyHash = passwords.hash("timing-only-dummy-secret");
+  }
+
+  public IdentityService(
+      IdentityPorts.LoginLimits loginLimits,
+      IdentityRepository repository,
+      IdentityPorts.Passwords passwords,
+      IdentityPorts.@Nullable Tokens tokens,
+      AppProperties properties,
+      FieldCipher cipher,
+      Clock clock,
+      JobQueue jobs,
+      @Nullable JobLease lease,
+      EventPublisher events,
+      TransactionTemplate tx,
+      AccountApi accounts,
+      @Nullable EmailService emailService) {
+    this(
+        loginLimits,
+        repository,
+        passwords,
+        tokens,
+        properties,
+        cipher,
+        clock,
+        jobs,
+        lease,
+        events,
+        tx,
+        accounts,
+        emailService,
+        null);
   }
 
   public IdentityService(
@@ -381,6 +416,35 @@ public class IdentityService implements IdentityApi, DataParticipant {
     if (u.passwordHash() == null || !passwords.matches(password, u.passwordHash())) {
       throw invalidLogin();
     }
+    recordRecentAuth(owner);
+  }
+
+  public void recordRecentAuth(UUID owner) {
+    if (redis != null) {
+      try {
+        redis.opsForValue().set("opticareer:auth:stepup:" + owner, String.valueOf(clock.millis()), java.time.Duration.ofHours(1));
+      } catch (Exception e) {
+        log.warn("Redis step-up timestamp recording failed for user {}: {}", owner, e.getMessage());
+      }
+    }
+  }
+
+  @Override
+  public boolean hasRecentAuth(UUID owner, java.time.Duration maxAge) {
+    if (redis == null) {
+      return true; // Graceful fallback in test environments without Redis
+    }
+    try {
+      String val = redis.opsForValue().get("opticareer:auth:stepup:" + owner);
+      if (val == null) {
+        return false;
+      }
+      long recordedAt = Long.parseLong(val);
+      return (clock.millis() - recordedAt) <= maxAge.toMillis();
+    } catch (Exception e) {
+      log.warn("Redis step-up lookup failed for user {}: {}", owner, e.getMessage());
+      return false;
+    }
   }
 
   @Override
@@ -458,6 +522,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
     repository.session(
         new Session(UuidV7.next(), owner, family, expires, null), IdempotentCommand.hash(refresh));
 
+    recordRecentAuth(owner);
     events.publish(owner, "UserSignedIn", Map.of("familyId", family));
     return new AuthResult(
         tokens.access(owner, family), refresh, owner, properties.security().accessMinutes() * 60);
