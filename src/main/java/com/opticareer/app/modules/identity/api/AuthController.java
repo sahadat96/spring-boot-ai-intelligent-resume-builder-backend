@@ -123,10 +123,7 @@ public class AuthController {
       int expiresIn,
 
       @Schema(description = "Unique user ID", example = "018f3a8b-1234-7000-8000-000000000001")
-      UUID userId,
-
-      @Schema(description = "Opaque refresh token (also delivered via secure HttpOnly cookie)", example = "dGhpcy1pcy1hLXJlZnJlc2gtdG9rZW4...")
-      String refreshToken) {}
+      UUID userId) {}
 
   @Schema(name = "SessionInfo", description = "Details of an active login session or connected device")
   public record SessionInfo(
@@ -372,7 +369,7 @@ public class AuthController {
     return ResponseEntity.ok()
         .header(HttpHeaders.SET_COOKIE, cookie(r.refreshToken(), maxAge))
         .header(HttpHeaders.CACHE_CONTROL, "no-store")
-        .body(new Access(r.accessToken(), "Bearer", r.expiresIn(), r.userId(), r.refreshToken()));
+        .body(new Access(r.accessToken(), "Bearer", r.expiresIn(), r.userId()));
   }
 
   private String resolveDeviceLabel(String userAgent) {

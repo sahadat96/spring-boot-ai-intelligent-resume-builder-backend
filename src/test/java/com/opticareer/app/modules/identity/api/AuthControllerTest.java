@@ -279,7 +279,7 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.tokenType").value("Bearer"))
         .andExpect(jsonPath("$.expiresIn").value(600))
         .andExpect(jsonPath("$.userId").value(userId.toString()))
-        .andExpect(jsonPath("$.refreshToken").value("refresh-opaque-token"))
+        .andExpect(jsonPath("$.refreshToken").doesNotExist())
         .andExpect(header().exists("Set-Cookie"));
   }
 
@@ -305,7 +305,7 @@ class AuthControllerTest {
                 .content(payload))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.accessToken").value("access-jwt-token"))
-        .andExpect(jsonPath("$.refreshToken").value("refresh-opaque-token"));
+        .andExpect(jsonPath("$.refreshToken").doesNotExist());
 
     verify(service).login(eq("applicant@example.com"), eq("CorrectPassword123!"), eq("Chrome on macOS"), any(), any());
   }
@@ -325,7 +325,7 @@ class AuthControllerTest {
                 .cookie(refreshCookie))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.accessToken").value("new-access-jwt"))
-        .andExpect(jsonPath("$.refreshToken").value("new-refresh-token"))
+        .andExpect(jsonPath("$.refreshToken").doesNotExist())
         .andExpect(header().exists("Set-Cookie"));
   }
 
@@ -349,7 +349,8 @@ class AuthControllerTest {
                 .content(payload))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.accessToken").value("new-access-jwt"))
-        .andExpect(jsonPath("$.refreshToken").value("new-refresh-token"));
+        .andExpect(jsonPath("$.refreshToken").doesNotExist())
+        .andExpect(header().exists("Set-Cookie"));
 
     verify(service).refresh("body-refresh-token");
   }
