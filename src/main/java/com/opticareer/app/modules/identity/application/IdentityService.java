@@ -8,6 +8,8 @@ import com.opticareer.app.platform.crypto.FieldCipher;
 import com.opticareer.app.platform.idempotency.IdempotentCommand;
 import com.opticareer.app.platform.jobs.JobLease;
 import com.opticareer.app.platform.jobs.JobQueue;
+import com.opticareer.app.platform.mail.EmailService;
+import com.opticareer.app.platform.mail.EmailTemplates;
 import com.opticareer.app.platform.mail.MailPort;
 import com.opticareer.app.platform.privacy.DataParticipant;
 import com.opticareer.app.shared.error.*;
@@ -40,7 +42,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
   private final EventPublisher events;
   private final TransactionTemplate tx;
   private final AccountApi accounts;
-  private final MailPort mail;
+  private final EmailService emailService;
   private final SecureRandom random = new SecureRandom();
   private final String dummyHash;
   private final IdentityPorts.LoginLimits loginLimits;
@@ -59,7 +61,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
       EventPublisher events,
       TransactionTemplate tx,
       AccountApi accounts,
-      @Nullable MailPort mail) {
+      @Nullable EmailService emailService) {
     this.loginLimits = loginLimits;
     this.repository = repository;
     this.passwords = passwords;
@@ -72,8 +74,38 @@ public class IdentityService implements IdentityApi, DataParticipant {
     this.events = events;
     this.tx = tx;
     this.accounts = accounts;
-    this.mail = mail;
+    this.emailService = emailService;
     this.dummyHash = passwords.hash("timing-only-dummy-secret");
+  }
+
+  public IdentityService(
+      IdentityPorts.LoginLimits loginLimits,
+      IdentityRepository repository,
+      IdentityPorts.Passwords passwords,
+      @Nullable IdentityPorts.Tokens tokens,
+      AppProperties properties,
+      FieldCipher cipher,
+      Clock clock,
+      JobQueue jobs,
+      @Nullable JobLease lease,
+      EventPublisher events,
+      TransactionTemplate tx,
+      AccountApi accounts,
+      @Nullable MailPort mail) {
+    this(
+        loginLimits,
+        repository,
+        passwords,
+        tokens,
+        properties,
+        cipher,
+        clock,
+        jobs,
+        lease,
+        events,
+        tx,
+        accounts,
+        mail != null ? new com.opticareer.app.platform.mail.DefaultEmailService(mail) : null);
   }
 
   public IdentityService(
@@ -102,7 +134,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
         events,
         tx,
         accounts,
-        null);
+        (EmailService) null);
   }
 
   public void register(String fullName, String email, String password) {
@@ -247,11 +279,11 @@ public class IdentityService implements IdentityApi, DataParticipant {
               Session session = repository.session(hash).orElseThrow();
 
               if (session.rotatedAt() != null) {
-                // Token reuse detected! Revoke entire session family immediately!
-                repository.revoke(session.family(), session.owner());
+                // Token reuse detected! In fintech standards, lockdown ALL sessions across all devices immediately!
+                repository.revokeAll(session.owner());
                 events.publish(
                     session.owner(), "SessionReuseDetected", Map.of("familyId", session.family()));
-                return new RefreshOutcome(null, true);
+                return new RefreshOutcome(null, true, session.owner());
               }
 
               if (!session.expiresAt().isAfter(clock.instant())
@@ -273,10 +305,20 @@ public class IdentityService implements IdentityApi, DataParticipant {
                       nextRefresh,
                       session.owner(),
                       properties.security().accessMinutes() * 60),
-                  false);
+                  false,
+                  session.owner());
             });
 
     if (Objects.requireNonNull(outcome).reused()) {
+      if (emailService != null && outcome.owner() != null) {
+        repository.byId(outcome.owner()).ifPresent(user -> {
+          emailService.sendNotification(
+              user.email(),
+              "Security Alert: Suspicious session activity detected",
+              "We detected an attempt to reuse an expired session token on your OptiCareer account. As a strict security precaution, all active sessions on all devices have been terminated. If this was not you, please sign in and change your password immediately."
+          );
+        });
+      }
       throw new DomainException(
           ErrorCode.SESSION_REUSE, "Refresh token reuse detected. Please sign in again.");
     }
@@ -431,31 +473,15 @@ public class IdentityService implements IdentityApi, DataParticipant {
 
     repository.token(UuidV7.next(), owner, hash, purpose, expires);
 
-    String path = purpose.equals("VERIFY") ? "/verify-email" : "/reset-password";
-    String link = properties.publicUrl() + path + "?token=" + otp;
     String subject =
         purpose.equals("VERIFY")
             ? "Verify your OptiCareer email"
             : "Reset your OptiCareer password";
 
-    String action = purpose.equals("VERIFY") ? "verify your account" : "reset your password";
-
-    String body = String.format("""
-        %s
-
-        Hello,
-
-        Your 6-digit verification code to %s is:
-
-        %s
-
-        This code is valid for 15 minutes. For security reasons, never share this code with anyone.
-
-        If you did not request this code, please ignore this email.
-
-        Best regards,
-        The OptiCareer Team
-        """, link, action, otp);
+    String body =
+        purpose.equals("VERIFY")
+            ? EmailTemplates.verificationOtpPlainText(otp)
+            : EmailTemplates.passwordResetOtpPlainText(otp);
 
     // 1. Transactional outbox job
     jobs.enqueue(
@@ -467,12 +493,12 @@ public class IdentityService implements IdentityApi, DataParticipant {
             "text", body,
             "otp", otp));
 
-    // 2. Direct SMTP dispatch if mail sender is available
-    if (mail != null) {
-      try {
-        mail.send(email, subject, body);
-      } catch (Exception e) {
-        log.warn("Direct SMTP delivery could not be sent (job queued in platform.jobs): {}", e.getMessage());
+    // 2. Dispatch via decoupled EmailService
+    if (emailService != null) {
+      if ("VERIFY".equals(purpose)) {
+        emailService.sendVerificationOtp(email, otp);
+      } else {
+        emailService.sendPasswordResetOtp(email, otp);
       }
     }
   }
@@ -485,7 +511,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
 
   private void requireOwner(UUID owner) {
     if (lease != null) {
-      requireOwner(owner);
+      lease.requireOwner(owner);
     }
   }
 
@@ -502,5 +528,5 @@ public class IdentityService implements IdentityApi, DataParticipant {
 
   public record AuthResult(String accessToken, String refreshToken, UUID userId, int expiresIn) {}
 
-  private record RefreshOutcome(AuthResult result, boolean reused) {}
+  private record RefreshOutcome(AuthResult result, boolean reused, UUID owner) {}
 }

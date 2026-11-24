@@ -19,6 +19,8 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
@@ -64,32 +66,26 @@ public class AuthController {
       @Schema(description = "Informational status message", example = "If registration can proceed, check your email.")
       String message) {}
 
-  @Schema(name = "VerifyOtpRequest", description = "Payload to verify a 6-digit OTP code or verification token")
+  @Schema(name = "VerifyOtpRequest", description = "Payload to verify a 6-digit OTP code")
   public record VerifyOtpRequest(
-      @Schema(description = "User email address", example = "candidate@example.com")
-      @Email @Size(max = 254) String email,
+      @Schema(description = "User email address", example = "candidate@example.com", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Email @Size(max = 254) String email,
 
-      @Schema(description = "6-digit numeric OTP code received via email", example = "482910")
-      @Pattern(regexp = "^[0-9]{6}$", message = "OTP must be exactly 6 digits") String otp,
-
-      @Schema(description = "Optional verification token string (if using link-based verification)", example = "a1b2c3d4...")
-      String token) {}
+      @Schema(description = "6-digit numeric OTP code received via email", example = "482910", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Pattern(regexp = "^[0-9]{6}$", message = "OTP must be exactly 6 digits") String otp) {}
 
   @Schema(name = "EmailRequest", description = "Payload specifying user email for code dispatch")
   public record EmailRequest(
       @Schema(description = "User email address", example = "candidate@example.com", requiredMode = Schema.RequiredMode.REQUIRED)
       @NotBlank @Email @Size(max = 254) String email) {}
 
-  @Schema(name = "ResetPasswordRequest", description = "Payload to reset account password using 6-digit OTP or reset token")
+  @Schema(name = "ResetPasswordRequest", description = "Payload to reset account password using 6-digit OTP")
   public record ResetPasswordRequest(
-      @Schema(description = "User email address", example = "candidate@example.com")
-      @Email @Size(max = 254) String email,
+      @Schema(description = "User email address", example = "candidate@example.com", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Email @Size(max = 254) String email,
 
-      @Schema(description = "6-digit numeric reset OTP code received via email", example = "839201")
-      String otp,
-
-      @Schema(description = "Optional reset token string", example = "token_abc123")
-      String token,
+      @Schema(description = "6-digit numeric reset OTP code received via email", example = "839201", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Pattern(regexp = "^[0-9]{6}$", message = "OTP must be exactly 6 digits") String otp,
 
       @Schema(description = "New secure password meeting security policy", example = "NewStrongPassword456!", requiredMode = Schema.RequiredMode.REQUIRED, minLength = 12, maxLength = 72)
       @NotBlank @Size(min = 12, max = 72) String password) {}
@@ -102,7 +98,7 @@ public class AuthController {
       @Schema(description = "Account password", example = "CorrectHorseBatteryStaple123!", requiredMode = Schema.RequiredMode.REQUIRED)
       @NotBlank @Size(max = 72) String password,
 
-      @Schema(description = "Optional client device description for session tracking", example = "Chrome on macOS")
+      @Schema(description = "Optional client device name (e.g. 'Chrome on macOS', 'iPhone 15'). If omitted, backend detects it from User-Agent.", example = "Chrome on macOS")
       @Size(max = 150) String deviceLabel) {}
 
   @Schema(name = "RefreshTokenRequest", description = "Optional payload for refresh token if not using HttpOnly cookie")
@@ -127,7 +123,30 @@ public class AuthController {
       int expiresIn,
 
       @Schema(description = "Unique user ID", example = "018f3a8b-1234-7000-8000-000000000001")
-      UUID userId) {}
+      UUID userId,
+
+      @Schema(description = "Opaque refresh token (also delivered via secure HttpOnly cookie)", example = "dGhpcy1pcy1hLXJlZnJlc2gtdG9rZW4...")
+      String refreshToken) {}
+
+  @Schema(name = "SessionInfo", description = "Details of an active login session or connected device")
+  public record SessionInfo(
+      @Schema(description = "Session family identifier", example = "018f3a8b-1234-7000-8000-000000000001")
+      UUID id,
+      @Schema(description = "Device or browser label", example = "Chrome on macOS")
+      String deviceLabel,
+      @Schema(description = "Timestamp when session was initiated")
+      Instant createdAt,
+      @Schema(description = "Timestamp when session expires")
+      Instant expiresAt,
+      @Schema(description = "Whether the session is currently active")
+      boolean active,
+      @Schema(description = "Whether this session represents the caller's current device")
+      boolean current) {}
+
+  @Schema(name = "ReauthenticateRequest", description = "Credentials required for high-risk step-up authentication")
+  public record ReauthenticateRequest(
+      @Schema(description = "Account master password", example = "CorrectHorseBatteryStaple123!", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Size(max = 72) String password) {}
 
   // --- Endpoints ---
 
@@ -147,18 +166,14 @@ public class AuthController {
 
   @Operation(
       summary = "Verify email with 6-digit OTP",
-      description = "Verifies the user's email address using the 6-digit OTP code or verification token sent to their inbox.")
+      description = "Verifies the user's email address using the 6-digit OTP code sent to their inbox.")
   @ApiResponses({
       @ApiResponse(responseCode = "200", description = "Email verified successfully."),
       @ApiResponse(responseCode = "400", description = "Invalid or expired verification code.")
   })
   @PostMapping({"/verify-otp", "/verify-email"})
   public MessageResponse verifyOtp(@Valid @RequestBody VerifyOtpRequest r) {
-    String code = (r.otp() != null && !r.otp().isBlank()) ? r.otp() : r.token();
-    if (code == null || code.isBlank()) {
-      throw DomainException.invalid("Provide a 6-digit OTP or verification token.");
-    }
-    service.verifyEmail(r.email(), code);
+    service.verifyEmail(r.email(), r.otp());
     return new MessageResponse("Email verified successfully. You may now sign in.");
   }
 
@@ -197,11 +212,7 @@ public class AuthController {
   })
   @PostMapping("/reset-password")
   public MessageResponse resetPassword(@Valid @RequestBody ResetPasswordRequest r) {
-    String code = (r.otp() != null && !r.otp().isBlank()) ? r.otp() : r.token();
-    if (code == null || code.isBlank()) {
-      throw DomainException.invalid("Provide the 6-digit reset OTP or reset token.");
-    }
-    service.resetPassword(r.email(), code, r.password());
+    service.resetPassword(r.email(), r.otp(), r.password());
     return new MessageResponse("Password reset successfully. Please sign in with your new password.");
   }
 
@@ -215,13 +226,18 @@ public class AuthController {
   })
   @PostMapping("/login")
   public ResponseEntity<Access> login(@Valid @RequestBody LoginRequest r, HttpServletRequest request) {
+    String userAgent = request.getHeader("User-Agent");
+    String label = (r.deviceLabel() != null && !r.deviceLabel().isBlank())
+        ? r.deviceLabel()
+        : resolveDeviceLabel(userAgent);
+
     IdentityService.AuthResult result =
         service.login(
             r.email(),
             r.password(),
-            r.deviceLabel(),
+            label,
             request.getRemoteAddr(),
-            request.getHeader("User-Agent"));
+            userAgent);
     return authResponse(result);
   }
 
@@ -279,6 +295,76 @@ public class AuthController {
     service.logoutAll(UUID.fromString(token.getName()));
   }
 
+  @Operation(
+      summary = "List active sessions",
+      description = "Retrieves all active devices and sessions for the authenticated user, identifying which one is current.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Active sessions retrieved successfully."),
+      @ApiResponse(responseCode = "401", description = "Authentication required.")
+  })
+  @GetMapping("/sessions")
+  public ResponseEntity<List<SessionInfo>> sessions(
+      @Parameter(hidden = true) JwtAuthenticationToken token) {
+    if (token == null) {
+      throw new DomainException(ErrorCode.UNAUTHENTICATED, "Authentication required.");
+    }
+    UUID owner = UUID.fromString(token.getName());
+    String currentSid = token.getToken() != null ? token.getToken().getClaimAsString("sid") : null;
+
+    List<SessionInfo> list = service.sessions(owner).stream()
+        .map(m -> new SessionInfo(
+            (UUID) m.get("id"),
+            (String) m.get("deviceLabel"),
+            (Instant) m.get("createdAt"),
+            (Instant) m.get("expiresAt"),
+            !Boolean.TRUE.equals(m.get("revoked")),
+            m.get("id") != null && m.get("id").toString().equals(currentSid)
+        ))
+        .toList();
+
+    return ResponseEntity.ok()
+        .header(HttpHeaders.CACHE_CONTROL, "no-store")
+        .body(list);
+  }
+
+  @Operation(
+      summary = "Revoke active session",
+      description = "Terminates a specific device or session by its identifier.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "204", description = "Session terminated successfully."),
+      @ApiResponse(responseCode = "401", description = "Authentication required.")
+  })
+  @DeleteMapping("/sessions/{id}")
+  public ResponseEntity<Void> revokeSession(
+      @PathVariable UUID id,
+      @Parameter(hidden = true) JwtAuthenticationToken token) {
+    if (token == null) {
+      throw new DomainException(ErrorCode.UNAUTHENTICATED, "Authentication required.");
+    }
+    UUID owner = UUID.fromString(token.getName());
+    service.revoke(owner, id);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Operation(
+      summary = "Step-up reauthentication",
+      description = "Confirms master password before high-risk transactional operations (PSD2 / fintech step-up requirement).")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Step-up authentication verified successfully."),
+      @ApiResponse(responseCode = "401", description = "Invalid password or authentication required.")
+  })
+  @PostMapping("/reauthenticate")
+  public ResponseEntity<MessageResponse> reauthenticate(
+      @Valid @RequestBody ReauthenticateRequest req,
+      @Parameter(hidden = true) JwtAuthenticationToken token) {
+    if (token == null) {
+      throw new DomainException(ErrorCode.UNAUTHENTICATED, "Authentication required.");
+    }
+    UUID owner = UUID.fromString(token.getName());
+    service.reauthenticate(owner, req.password(), null);
+    return ResponseEntity.ok(new MessageResponse("Step-up authentication verified."));
+  }
+  
   // --- Helper Methods ---
 
   private ResponseEntity<Access> authResponse(IdentityService.AuthResult r) {
@@ -286,7 +372,27 @@ public class AuthController {
     return ResponseEntity.ok()
         .header(HttpHeaders.SET_COOKIE, cookie(r.refreshToken(), maxAge))
         .header(HttpHeaders.CACHE_CONTROL, "no-store")
-        .body(new Access(r.accessToken(), "Bearer", r.expiresIn(), r.userId()));
+        .body(new Access(r.accessToken(), "Bearer", r.expiresIn(), r.userId(), r.refreshToken()));
+  }
+
+  private String resolveDeviceLabel(String userAgent) {
+    if (userAgent == null || userAgent.isBlank()) {
+      return "Web Browser";
+    }
+    String browser = "Browser";
+    if (userAgent.contains("Edg/")) browser = "Edge";
+    else if (userAgent.contains("Chrome/")) browser = "Chrome";
+    else if (userAgent.contains("Firefox/")) browser = "Firefox";
+    else if (userAgent.contains("Safari/") && !userAgent.contains("Chrome/")) browser = "Safari";
+
+    String os = "Unknown OS";
+    if (userAgent.contains("Windows")) os = "Windows";
+    else if (userAgent.contains("Macintosh") || userAgent.contains("Mac OS")) os = "macOS";
+    else if (userAgent.contains("iPhone") || userAgent.contains("iPad")) os = "iOS";
+    else if (userAgent.contains("Android")) os = "Android";
+    else if (userAgent.contains("Linux")) os = "Linux";
+
+    return browser + " on " + os;
   }
 
   private String cookie(String value, long age) {

@@ -142,7 +142,7 @@ class IdentityServiceRegistrationTest {
           if (!(payload instanceof Map<?, ?> map)) return false;
           return "candidate@example.com".equals(map.get("email"))
               && "Verify your OptiCareer email".equals(map.get("subject"))
-              && map.get("text").toString().startsWith("http://localhost:5173/verify-email?token=");
+              && map.get("text").toString().contains("Your 6-digit verification code to verify your account is:");
         })
     );
 

@@ -38,6 +38,8 @@ spring:
       port: ${REDIS_PORT}
       password: ${REDIS_PASSWORD:}
       timeout: ${REDIS_TIMEOUT}
+      repositories:
+        enabled: false
 
   mail:
     host: ${SMTP_HOST}
