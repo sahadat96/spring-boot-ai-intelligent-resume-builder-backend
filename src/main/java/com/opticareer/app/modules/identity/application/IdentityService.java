@@ -21,7 +21,7 @@ import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.lang.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -52,7 +52,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
       IdentityPorts.LoginLimits loginLimits,
       IdentityRepository repository,
       IdentityPorts.Passwords passwords,
-      @Nullable IdentityPorts.Tokens tokens,
+      IdentityPorts.@Nullable Tokens tokens,
       AppProperties properties,
       FieldCipher cipher,
       Clock clock,
@@ -82,7 +82,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
       IdentityPorts.LoginLimits loginLimits,
       IdentityRepository repository,
       IdentityPorts.Passwords passwords,
-      @Nullable IdentityPorts.Tokens tokens,
+      IdentityPorts.@Nullable Tokens tokens,
       AppProperties properties,
       FieldCipher cipher,
       Clock clock,
@@ -112,8 +112,8 @@ public class IdentityService implements IdentityApi, DataParticipant {
       IdentityPorts.LoginLimits loginLimits,
       IdentityRepository repository,
       IdentityPorts.Passwords passwords,
-      @Nullable IdentityPorts.Tokens tokens,
-      @Nullable IdentityPorts.Google google,
+      IdentityPorts.@Nullable Tokens tokens,
+      IdentityPorts.@Nullable Google google,
       AppProperties properties,
       FieldCipher cipher,
       Clock clock,
