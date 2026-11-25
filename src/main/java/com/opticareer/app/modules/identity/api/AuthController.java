@@ -81,16 +81,30 @@ public class AuthController {
       @Schema(description = "User email address", example = "candidate@example.com", requiredMode = Schema.RequiredMode.REQUIRED)
       @NotBlank @Email @Size(max = 254) String email) {}
 
-  @Schema(name = "ResetPasswordRequest", description = "Payload to reset account password using 6-digit OTP")
-  public record ResetPasswordRequest(
-      @Schema(description = "User email address", example = "candidate@example.com", requiredMode = Schema.RequiredMode.REQUIRED)
-      @NotBlank @Email @Size(max = 254) String email,
+  @Schema(name = "VerifyResetOtpResponse", description = "Short-lived single-use token returned after verifying the password reset OTP")
+  public record VerifyResetOtpResponse(
+      @Schema(description = "Single-use token to authorize password reset", example = "dGhpcy1pcy1hLXJlc2V0LXRva2Vu...")
+      String resetToken,
 
-      @Schema(description = "6-digit numeric reset OTP code received via email", example = "839201", requiredMode = Schema.RequiredMode.REQUIRED)
-      @NotBlank @Pattern(regexp = "^[0-9]{6}$", message = "OTP must be exactly 6 digits") String otp,
+      @Schema(description = "Lifetime of the reset token in seconds", example = "900")
+      int expiresIn,
+
+      @Schema(description = "Status message", example = "Password reset code verified. Use resetToken to set a new password.")
+      String message) {}
+
+  @Schema(name = "ResetPasswordRequest", description = "Payload to reset account password using the resetToken from verify-reset-otp (or legacy email + otp)")
+  public record ResetPasswordRequest(
+      @Schema(description = "Single-use resetToken returned by POST /api/v1/auth/verify-reset-otp", example = "dGhpcy1pcy1hLXJlc2V0LXRva2Vu...")
+      String resetToken,
 
       @Schema(description = "New secure password meeting security policy", example = "NewStrongPassword456!", requiredMode = Schema.RequiredMode.REQUIRED, minLength = 12, maxLength = 72)
-      @NotBlank @Size(min = 12, max = 72) String password) {}
+      @NotBlank @Size(min = 12, max = 72) String password,
+
+      @Schema(description = "Optional legacy field if resetting directly with 6-digit OTP without calling verify-reset-otp", hidden = true)
+      @Email @Size(max = 254) String email,
+
+      @Schema(description = "Optional legacy 6-digit OTP if not using resetToken", hidden = true)
+      @Pattern(regexp = "^[0-9]{6}$", message = "OTP must be exactly 6 digits") String otp) {}
 
   @Schema(name = "LoginRequest", description = "Credentials required to authenticate and obtain tokens")
   public record LoginRequest(
@@ -146,6 +160,24 @@ public class AuthController {
   public record ReauthenticateRequest(
       @Schema(description = "Account master password", example = "CorrectHorseBatteryStaple123!", requiredMode = Schema.RequiredMode.REQUIRED)
       @NotBlank @Size(max = 72) String password) {}
+
+  @Schema(name = "OAuthChallengeResponse", description = "Single-use anti-replay nonce challenge for OIDC sign-in")
+  public record OAuthChallengeResponse(
+      @Schema(description = "Cryptographic nonce to pass to Google Sign-In", example = "xK9vT2pQ...")
+      String nonce,
+      @Schema(description = "Challenge lifetime in seconds", example = "300")
+      int expiresIn) {}
+
+  @Schema(name = "GoogleAuthRequest", description = "Google OIDC ID Token payload for unified Google Sign-Up and Google Login")
+  public record GoogleAuthRequest(
+      @Schema(description = "Signed Google ID Token (JWT) obtained from Google Identity Services or mobile SDK", example = "eyJhbGciOiJSUzI1NiIsImtpZCI6...", requiredMode = Schema.RequiredMode.REQUIRED)
+      @NotBlank @Size(max = 4096) String idToken,
+
+      @Schema(description = "Optional anti-replay nonce from GET /api/v1/auth/oauth/challenge", example = "xK9vT2pQ...")
+      @Size(max = 256) String nonce,
+
+      @Schema(description = "Optional client device label (auto-detected from User-Agent if omitted)", example = "Chrome on macOS")
+      @Size(max = 150) String deviceLabel) {}
 
   // --- Endpoints ---
 
@@ -203,15 +235,37 @@ public class AuthController {
   }
 
   @Operation(
-      summary = "Reset password with OTP",
-      description = "Resets the account password using the 6-digit OTP code received in email and invalidates all existing sessions.")
+      summary = "Verify password reset OTP",
+      description = "Consumes the 6-digit password reset OTP and returns a single-use resetToken valid for 15 minutes to submit on POST /api/v1/auth/reset-password.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Password reset OTP verified; resetToken issued."),
+      @ApiResponse(responseCode = "401", description = "Invalid or expired password reset code."),
+      @ApiResponse(responseCode = "429", description = "Too many verification attempts.")
+  })
+  @PostMapping("/verify-reset-otp")
+  public VerifyResetOtpResponse verifyResetOtp(@Valid @RequestBody VerifyOtpRequest r) {
+    String resetToken = service.verifyResetOtp(r.email(), r.otp());
+    return new VerifyResetOtpResponse(
+        resetToken, 900, "Password reset code verified. Use resetToken to set a new password.");
+  }
+
+  @Operation(
+      summary = "Reset password",
+      description = "Resets the account password using the resetToken from POST /api/v1/auth/verify-reset-otp (or email + otp) and invalidates all existing sessions.")
   @ApiResponses({
       @ApiResponse(responseCode = "200", description = "Password reset successfully."),
-      @ApiResponse(responseCode = "400", description = "Invalid code or weak password.")
+      @ApiResponse(responseCode = "400", description = "Missing resetToken or weak password."),
+      @ApiResponse(responseCode = "401", description = "Invalid or expired resetToken.")
   })
   @PostMapping("/reset-password")
   public MessageResponse resetPassword(@Valid @RequestBody ResetPasswordRequest r) {
-    service.resetPassword(r.email(), r.otp(), r.password());
+    if (r.resetToken() != null && !r.resetToken().isBlank()) {
+      service.resetPassword(null, r.resetToken(), r.password());
+    } else if (r.email() != null && !r.email().isBlank() && r.otp() != null && !r.otp().isBlank()) {
+      service.resetPassword(r.email(), r.otp(), r.password());
+    } else {
+      throw DomainException.invalid("Provide resetToken (or email and otp) to reset password.");
+    }
     return new MessageResponse("Password reset successfully. Please sign in with your new password.");
   }
 
@@ -234,6 +288,47 @@ public class AuthController {
         service.login(
             r.email(),
             r.password(),
+            label,
+            request.getRemoteAddr(),
+            userAgent);
+    return authResponse(result);
+  }
+
+  @Operation(
+      summary = "Issue OAuth anti-replay challenge",
+      description = "Generates a single-use cryptographic nonce (valid 5 minutes) to bind to Google OIDC ID Tokens against replay attacks.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Challenge nonce issued.")
+  })
+  @GetMapping("/oauth/challenge")
+  public ResponseEntity<OAuthChallengeResponse> oauthChallenge() {
+    var challenge = service.issueOAuthChallenge();
+    return ResponseEntity.ok()
+        .header(HttpHeaders.CACHE_CONTROL, "no-store")
+        .body(new OAuthChallengeResponse(challenge.nonce(), challenge.expiresIn()));
+  }
+
+  @Operation(
+      summary = "Google OAuth Sign-In / Sign-Up",
+      description = "Verifies a Google OIDC ID Token (RS256 JWKS, audience, issuer, email_verified, optional nonce). Automatically creates and provisions an account on first sign-in or links to an existing verified account, setting an HttpOnly refresh cookie and returning a JWT access token.")
+  @ApiResponses({
+      @ApiResponse(responseCode = "200", description = "Google authentication successful."),
+      @ApiResponse(responseCode = "401", description = "Invalid, expired, or untrusted Google ID token."),
+      @ApiResponse(responseCode = "403", description = "Google email unverified or account deletion pending."),
+      @ApiResponse(responseCode = "503", description = "Google Sign-In not configured.")
+  })
+  @PostMapping({"/oauth/google", "/google"})
+  public ResponseEntity<Access> googleAuth(
+      @Valid @RequestBody GoogleAuthRequest r, HttpServletRequest request) {
+    String userAgent = request.getHeader("User-Agent");
+    String label = (r.deviceLabel() != null && !r.deviceLabel().isBlank())
+        ? r.deviceLabel()
+        : resolveDeviceLabel(userAgent);
+
+    IdentityService.AuthResult result =
+        service.googleAuth(
+            r.idToken(),
+            r.nonce(),
             label,
             request.getRemoteAddr(),
             userAgent);

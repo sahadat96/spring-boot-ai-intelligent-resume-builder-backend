@@ -20,15 +20,20 @@ public class JpaIdentityRepository implements IdentityRepository {
   private final IdentityFamilyJpaRepository families;
   private final IdentitySessionJpaRepository sessions;
   private final IdentityEmailTokenJpaRepository tokens;
+  private final IdentityOAuthAccountJpaRepository oauthAccounts;
+  private final IdentityOAuthChallengeJpaRepository oauthChallenges;
   private final DatabaseLocks locks;
   private final Clock clock;
 
+  @org.springframework.beans.factory.annotation.Autowired
   public JpaIdentityRepository(
       IdentityUserJpaRepository users,
       IdentityCredentialJpaRepository credentials,
       IdentityFamilyJpaRepository families,
       IdentitySessionJpaRepository sessions,
       IdentityEmailTokenJpaRepository tokens,
+      IdentityOAuthAccountJpaRepository oauthAccounts,
+      IdentityOAuthChallengeJpaRepository oauthChallenges,
       DatabaseLocks locks,
       Clock clock) {
     this.users = users;
@@ -36,6 +41,8 @@ public class JpaIdentityRepository implements IdentityRepository {
     this.families = families;
     this.sessions = sessions;
     this.tokens = tokens;
+    this.oauthAccounts = oauthAccounts;
+    this.oauthChallenges = oauthChallenges;
     this.locks = locks;
     this.clock = clock;
   }
@@ -274,5 +281,47 @@ public class JpaIdentityRepository implements IdentityRepository {
   public void erase(UUID owner) {
     users.deleteById(owner);
     users.flush();
+  }
+
+  @Override
+  public Optional<UUID> oauthUser(String provider, String subject) {
+    return oauthAccounts.findByProviderAndSubject(provider, subject).map(a -> a.userId);
+  }
+
+  @Override
+  @Transactional
+  public void linkOAuth(UUID id, UUID owner, String provider, String subject) {
+    if (oauthAccounts.findByProviderAndSubject(provider, subject).isPresent()) {
+      return;
+    }
+    var entity = new IdentityOAuthAccountEntity();
+    entity.id = id;
+    entity.userId = owner;
+    entity.provider = provider;
+    entity.subject = subject;
+    oauthAccounts.saveAndFlush(entity);
+  }
+
+  @Override
+  @Transactional
+  public void recordOAuthChallenge(String tokenHash, Instant expiresAt) {
+    var entity = new IdentityOAuthChallengeEntity();
+    entity.tokenHash = tokenHash;
+    entity.expiresAt = expiresAt;
+    entity.createdAt = clock.instant();
+    oauthChallenges.saveAndFlush(entity);
+  }
+
+  @Override
+  @Transactional
+  public void consumeOAuthChallenge(String tokenHash, Instant now) {
+    var entity =
+        oauthChallenges
+            .lock(tokenHash)
+            .filter(c -> c.consumedAt == null && c.expiresAt.isAfter(now))
+            .orElseThrow(
+                () -> new DomainException(ErrorCode.INVALID_TOKEN, "Invalid or expired OAuth challenge."));
+    entity.consumedAt = now;
+    oauthChallenges.saveAndFlush(entity);
   }
 }

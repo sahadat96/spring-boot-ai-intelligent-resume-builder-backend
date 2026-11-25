@@ -35,6 +35,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
   private final IdentityRepository repository;
   private final IdentityPorts.Passwords passwords;
   private final IdentityPorts.Tokens tokens;
+  private final IdentityPorts.@Nullable Google google;
   private final AppProperties properties;
   private final FieldCipher cipher;
   private final Clock clock;
@@ -55,6 +56,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
       IdentityRepository repository,
       IdentityPorts.Passwords passwords,
       IdentityPorts.@Nullable Tokens tokens,
+      IdentityPorts.@Nullable Google google,
       AppProperties properties,
       FieldCipher cipher,
       Clock clock,
@@ -69,6 +71,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
     this.repository = repository;
     this.passwords = passwords;
     this.tokens = tokens;
+    this.google = google;
     this.properties = properties;
     this.cipher = cipher;
     this.clock = clock;
@@ -80,6 +83,39 @@ public class IdentityService implements IdentityApi, DataParticipant {
     this.emailService = emailService;
     this.redis = redis;
     this.dummyHash = passwords.hash("timing-only-dummy-secret");
+  }
+
+  public IdentityService(
+      IdentityPorts.LoginLimits loginLimits,
+      IdentityRepository repository,
+      IdentityPorts.Passwords passwords,
+      IdentityPorts.@Nullable Tokens tokens,
+      AppProperties properties,
+      FieldCipher cipher,
+      Clock clock,
+      JobQueue jobs,
+      @Nullable JobLease lease,
+      EventPublisher events,
+      TransactionTemplate tx,
+      AccountApi accounts,
+      @Nullable EmailService emailService,
+      @Nullable StringRedisTemplate redis) {
+    this(
+        loginLimits,
+        repository,
+        passwords,
+        tokens,
+        null,
+        properties,
+        cipher,
+        clock,
+        jobs,
+        lease,
+        events,
+        tx,
+        accounts,
+        emailService,
+        redis);
   }
 
   public IdentityService(
@@ -161,6 +197,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
         repository,
         passwords,
         tokens,
+        google,
         properties,
         cipher,
         clock,
@@ -169,7 +206,8 @@ public class IdentityService implements IdentityApi, DataParticipant {
         events,
         tx,
         accounts,
-        (EmailService) null);
+        null,
+        null);
   }
 
   public void register(String fullName, String email, String password) {
@@ -265,6 +303,21 @@ public class IdentityService implements IdentityApi, DataParticipant {
         });
   }
 
+  public String verifyResetOtp(String email, String otp) {
+    String normalized = email.toLowerCase(Locale.ROOT).strip();
+    loginLimits.attempt("reset-otp:" + normalized);
+    String resetToken = opaque();
+    String resetTokenHash = IdempotentCommand.hash(resetToken);
+    Instant expires = clock.instant().plusSeconds(900);
+
+    tx.executeWithoutResult(
+        status -> {
+          UUID owner = consumeToken(normalized, otp, "RESET");
+          repository.token(UuidV7.next(), owner, resetTokenHash, "RESET", expires);
+        });
+    return resetToken;
+  }
+
   public AuthResult login(
       String email, String password, String device, String ip, String agent) {
     String normalized = email.toLowerCase(Locale.ROOT).strip();
@@ -292,6 +345,62 @@ public class IdentityService implements IdentityApi, DataParticipant {
                 ErrorCode.EMAIL_NOT_VERIFIED, "Verify your email before signing in.");
           }
           return newFamily(current.id(), device, ip, agent);
+        });
+  }
+
+  public record OAuthChallenge(String nonce, int expiresIn) {}
+
+  public OAuthChallenge issueOAuthChallenge() {
+    String nonce = opaque();
+    repository.recordOAuthChallenge(IdempotentCommand.hash(nonce), clock.instant().plusSeconds(300));
+    return new OAuthChallenge(nonce, 300);
+  }
+
+  public AuthResult googleAuth(
+      String idToken, @Nullable String nonce, String device, String ip, String agent) {
+    if (google == null) {
+      throw new DomainException(ErrorCode.PROVIDER_UNAVAILABLE, "Google Sign-In is unavailable.");
+    }
+    IdentityPorts.Google.Verified verified = google.verify(idToken, nonce);
+    String normalized = verified.email().toLowerCase(Locale.ROOT).strip();
+
+    return tx.execute(
+        status -> {
+          if (nonce != null && !nonce.isBlank()) {
+            repository.consumeOAuthChallenge(IdempotentCommand.hash(nonce), clock.instant());
+          }
+
+          UUID linkedUserId = repository.oauthUser("GOOGLE", verified.subject()).orElse(null);
+          if (linkedUserId != null) {
+            User current = repository.lockUser(linkedUserId);
+            requireActive(current);
+            return newFamily(current.id(), device, ip, agent);
+          }
+
+          repository.lockEmail(normalized);
+          User existing = repository.byEmail(normalized).orElse(null);
+          if (existing != null) {
+            User current = repository.lockUser(existing.id());
+            requireActive(current);
+            if (!current.verified()) {
+              repository.verify(current.id());
+            }
+            repository.linkOAuth(UuidV7.next(), current.id(), "GOOGLE", verified.subject());
+            events.publish(current.id(), "OAuthAccountLinked", Map.of("provider", "GOOGLE"));
+            return newFamily(current.id(), device, ip, agent);
+          }
+
+          UUID userId = UuidV7.next();
+          repository.create(new User(userId, normalized, null, clock.instant(), "ACTIVE"));
+          repository.linkOAuth(UuidV7.next(), userId, "GOOGLE", verified.subject());
+
+          String displayName =
+              (verified.fullName() != null && !verified.fullName().isBlank())
+                  ? verified.fullName().strip()
+                  : normalized.substring(0, normalized.indexOf('@'));
+          accounts.initializeProfile(userId, displayName);
+          events.publish(userId, "UserRegistered", Map.of("provider", "GOOGLE"));
+          return newFamily(userId, device, ip, agent);
         });
   }
 

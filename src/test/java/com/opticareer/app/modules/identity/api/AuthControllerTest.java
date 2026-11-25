@@ -506,4 +506,116 @@ class AuthControllerTest {
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
   }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/verify-reset-otp returns 200 OK with single-use resetToken")
+  void verifyResetOtpSuccess() throws Exception {
+    when(service.verifyResetOtp("sahadatcodeman@gmail.com", "121541")).thenReturn("opaque-reset-token-123");
+
+    String payload = """
+        {
+          "email": "sahadatcodeman@gmail.com",
+          "otp": "121541"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/verify-reset-otp")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.resetToken").value("opaque-reset-token-123"))
+        .andExpect(jsonPath("$.expiresIn").value(900))
+        .andExpect(jsonPath("$.message").value("Password reset code verified. Use resetToken to set a new password."));
+
+    verify(service).verifyResetOtp("sahadatcodeman@gmail.com", "121541");
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/reset-password resets password using resetToken without email or otp")
+  void resetPasswordWithResetTokenSuccess() throws Exception {
+    String payload = """
+        {
+          "resetToken": "opaque-reset-token-123",
+          "password": "NewStrongPassword456!"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/reset-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.message").value("Password reset successfully. Please sign in with your new password."));
+
+    verify(service).resetPassword(null, "opaque-reset-token-123", "NewStrongPassword456!");
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/verify-reset-otp returns 401 when OTP is invalid or expired")
+  void verifyResetOtpInvalid() throws Exception {
+    doThrow(new DomainException(com.opticareer.app.shared.error.ErrorCode.INVALID_TOKEN, "Invalid or expired password reset code."))
+        .when(service).verifyResetOtp("sahadatcodeman@gmail.com", "999999");
+
+    String payload = """
+        {
+          "email": "sahadatcodeman@gmail.com",
+          "otp": "999999"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/verify-reset-otp")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("INVALID_TOKEN"));
+  }
+
+  @Test
+  @DisplayName("GET /api/v1/auth/oauth/challenge issues anti-replay nonce with no-store header")
+  void oauthChallengeSuccess() throws Exception {
+    when(service.issueOAuthChallenge()).thenReturn(new IdentityService.OAuthChallenge("nonce-xyz-123", 300));
+
+    mockMvc
+        .perform(get("/api/v1/auth/oauth/challenge"))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", "no-store"))
+        .andExpect(jsonPath("$.nonce").value("nonce-xyz-123"))
+        .andExpect(jsonPath("$.expiresIn").value(300));
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/auth/oauth/google sets HttpOnly refresh cookie and returns Access JWT")
+  void googleAuthSuccess() throws Exception {
+    java.util.UUID userId = java.util.UUID.randomUUID();
+    when(service.googleAuth(eq("google-id-jwt"), eq("nonce-xyz"), anyString(), anyString(), anyString()))
+        .thenReturn(new IdentityService.AuthResult("access-jwt-token", "refresh-opaque-token", userId, 600));
+
+    String payload = """
+        {
+          "idToken": "google-id-jwt",
+          "nonce": "nonce-xyz",
+          "deviceLabel": "Chrome on macOS"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/oauth/google")
+                .header("User-Agent", "Mozilla/5.0")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("refresh=refresh-opaque-token")))
+        .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("HttpOnly")))
+        .andExpect(jsonPath("$.accessToken").value("access-jwt-token"))
+        .andExpect(jsonPath("$.tokenType").value("Bearer"))
+        .andExpect(jsonPath("$.expiresIn").value(600))
+        .andExpect(jsonPath("$.userId").value(userId.toString()))
+        .andExpect(jsonPath("$.refreshToken").doesNotExist());
+  }
 }

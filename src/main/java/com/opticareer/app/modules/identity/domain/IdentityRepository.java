@@ -53,4 +53,12 @@ public interface IdentityRepository {
   boolean isAdmin(UUID owner);
 
   void erase(UUID owner);
+
+  Optional<UUID> oauthUser(String provider, String subject);
+
+  void linkOAuth(UUID id, UUID owner, String provider, String subject);
+
+  void recordOAuthChallenge(String tokenHash, Instant expiresAt);
+
+  void consumeOAuthChallenge(String tokenHash, Instant now);
 }
