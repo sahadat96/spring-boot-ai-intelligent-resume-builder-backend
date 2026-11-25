@@ -62,4 +62,27 @@ class DotenvEnvironmentPostProcessorTest {
     DotenvEnvironmentPostProcessor processor = new DotenvEnvironmentPostProcessor();
     assertThat(processor.getOrder()).isEqualTo(org.springframework.core.Ordered.HIGHEST_PRECEDENCE + 9);
   }
+
+  @Test
+  @DisplayName("Loads Docker Secrets from /run/secrets/*, trims trailing newlines, skips hidden files, and overrides .env")
+  void loadsDockerSecretsWithTrimAndPrecedence(@TempDir Path tempDir) throws Exception {
+    Path secretsDir = tempDir.resolve("secrets");
+    Files.createDirectories(secretsDir);
+    // Simulate trailing newline often created by echo/editors
+    Files.writeString(secretsDir.resolve("JWT_KEY"), "prod-base64-jwt-key\n");
+    Files.writeString(secretsDir.resolve("STRIPE_API_KEY"), "  sk_live_abc123\r\n");
+    Files.writeString(secretsDir.resolve(".hidden"), "should-ignore");
+
+    StandardEnvironment env = new StandardEnvironment();
+    env.getPropertySources().addLast(
+        new org.springframework.core.env.MapPropertySource(
+            "dotenvProperties", java.util.Map.of("JWT_KEY", "local-dev-jwt-key")));
+
+    DotenvEnvironmentPostProcessor processor = new DotenvEnvironmentPostProcessor(secretsDir);
+    processor.postProcessEnvironment(env, new SpringApplication());
+
+    assertThat(env.getProperty("JWT_KEY")).isEqualTo("prod-base64-jwt-key");
+    assertThat(env.getProperty("STRIPE_API_KEY")).isEqualTo("sk_live_abc123");
+    assertThat(env.getProperty(".hidden")).isNull();
+  }
 }

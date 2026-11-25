@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.EnvironmentPostProcessor;
@@ -18,38 +19,90 @@ import org.springframework.core.env.StandardEnvironment;
 
 /**
  * Enterprise-grade environment post-processor for fintech applications.
- * Automatically loads .env files in local/development environments before Spring Boot
- * resolves configuration properties and datasource credentials, while ensuring
- * that true operating system environment variables always take precedence.
+ * <p>
+ * Resolves configuration securely across environments in strict precedence order:
+ * <ol>
+ *   <li>True OS / RAM environment variables (highest priority)</li>
+ *   <li>Docker Secrets mounted in RAM at {@code /run/secrets/*} (production VPS/Swarm/K8s)</li>
+ *   <li>Local {@code .env} file (local development convenience only)</li>
+ * </ol>
  */
 public class DotenvEnvironmentPostProcessor implements EnvironmentPostProcessor, Ordered {
 
   private static final Logger log = LoggerFactory.getLogger(DotenvEnvironmentPostProcessor.class);
   private static final String PROPERTY_SOURCE_NAME = "dotenvProperties";
+  private static final String DOCKER_SECRETS_SOURCE_NAME = "dockerSecretsProperties";
+  private static final Path DEFAULT_SECRETS_DIR = Path.of("/run/secrets");
+
+  private final Path secretsDir;
+
+  public DotenvEnvironmentPostProcessor() {
+    this(DEFAULT_SECRETS_DIR);
+  }
+
+  DotenvEnvironmentPostProcessor(Path secretsDir) {
+    this.secretsDir = secretsDir;
+  }
 
   @Override
   public int getOrder() {
-    // Run with high precedence so loaded .env variables are available for application.yml placeholder resolution
+    // Run with high precedence so secrets & .env variables are available for application.yml placeholders
     return Ordered.HIGHEST_PRECEDENCE + 9;
   }
 
   @Override
   public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
+    // 1. Load local .env file first (lowest priority among external sources)
     Path envPath = findDotenvPath();
-    if (envPath == null || !Files.isRegularFile(envPath)) {
-      return;
+    if (envPath != null && Files.isRegularFile(envPath)) {
+      Map<String, Object> properties = loadDotenv(envPath);
+      if (!properties.isEmpty()) {
+        addAfterSystemEnv(environment, new MapPropertySource(PROPERTY_SOURCE_NAME, properties));
+        log.info("Loaded {} configuration properties from {}", properties.size(), envPath.toAbsolutePath().normalize());
+      }
     }
 
-    Map<String, Object> properties = loadDotenv(envPath);
-    if (!properties.isEmpty()) {
-      MapPropertySource propertySource = new MapPropertySource(PROPERTY_SOURCE_NAME, properties);
-      if (environment.getPropertySources().contains(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME)) {
-        environment.getPropertySources().addAfter(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, propertySource);
-      } else {
-        environment.getPropertySources().addLast(propertySource);
+    // 2. Load Docker Secrets (/run/secrets/*) so they override .env while still allowing OS env override
+    if (secretsDir != null && Files.isDirectory(secretsDir)) {
+      Map<String, Object> secrets = loadDockerSecrets(secretsDir);
+      if (!secrets.isEmpty()) {
+        addAfterSystemEnv(environment, new MapPropertySource(DOCKER_SECRETS_SOURCE_NAME, secrets));
+        log.info("Loaded {} Docker secrets from {}", secrets.size(), secretsDir);
       }
-      log.info("Loaded {} configuration properties from {}", properties.size(), envPath.toAbsolutePath().normalize());
     }
+  }
+
+  private void addAfterSystemEnv(ConfigurableEnvironment environment, MapPropertySource source) {
+    if (environment.getPropertySources().contains(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME)) {
+      environment.getPropertySources().addAfter(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, source);
+    } else {
+      environment.getPropertySources().addFirst(source);
+    }
+  }
+
+  Map<String, Object> loadDockerSecrets(Path dir) {
+    Map<String, Object> secrets = new LinkedHashMap<>();
+    try (Stream<Path> files = Files.list(dir)) {
+      files
+          .filter(Files::isRegularFile)
+          .forEach(
+              file -> {
+                String name = file.getFileName().toString();
+                if (name.startsWith(".") || !name.matches("^[A-Za-z0-9_.-]+$")) {
+                  return;
+                }
+                try {
+                  // Strip trailing newlines commonly added by editors/echo so Base64 keys never corrupt
+                  String value = Files.readString(file, StandardCharsets.UTF_8).strip();
+                  secrets.put(name, value);
+                } catch (IOException e) {
+                  log.warn("Failed to read Docker secret '{}': {}", name, e.getMessage());
+                }
+              });
+    } catch (IOException e) {
+      log.warn("Failed to scan Docker secrets directory {}: {}", dir, e.getMessage());
+    }
+    return secrets;
   }
 
   private Path findDotenvPath() {
