@@ -328,10 +328,11 @@ public class AuthController {
 
   @Operation(
       summary = "Revoke active session",
-      description = "Terminates a specific device or session by its identifier.")
+      description = "Terminates a specific device or session by its identifier. Requires step-up re-authentication within the last 15 minutes (PSD2 SCA).")
   @ApiResponses({
       @ApiResponse(responseCode = "204", description = "Session terminated successfully."),
-      @ApiResponse(responseCode = "401", description = "Authentication required.")
+      @ApiResponse(responseCode = "401", description = "Authentication required."),
+      @ApiResponse(responseCode = "403", description = "Step-up re-authentication required (WWW-Authenticate: StepUp). Call POST /api/v1/auth/reauthenticate first.")
   })
   @DeleteMapping("/sessions/{id}")
   @RequireRecentAuth(maxAgeMinutes = 15)

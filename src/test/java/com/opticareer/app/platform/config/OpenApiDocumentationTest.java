@@ -80,6 +80,8 @@ class OpenApiDocumentationTest {
     assertThat(response).contains("Emran Hossain");
     assertThat(response).contains("RegisterRequest");
     assertThat(response).contains("RegisterResponse");
+    assertThat(response).contains("Step-Up Auth (PSD2 SCA)");
+    assertThat(response).contains("WWW-Authenticate: StepUp");
   }
 
   @Test
