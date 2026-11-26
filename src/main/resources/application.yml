@@ -1,6 +1,7 @@
 server:
   port: ${PORT}
   shutdown: graceful
+  forward-headers-strategy: native
   error:
     include-message: never
     include-stacktrace: never
