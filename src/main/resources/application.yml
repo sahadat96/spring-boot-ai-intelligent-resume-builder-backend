@@ -21,7 +21,7 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    schemas: platform, identity, account, billing, document, resume, ai, tailoring
+    schemas: platform, identity, account, billing, document, resume, ai, tailoring, analysis
     default-schema: platform
     create-schemas: true
     clean-disabled: true
@@ -53,6 +53,11 @@ spring:
       mail.smtp.connectiontimeout: 5000
       mail.smtp.timeout: 5000
       mail.smtp.writetimeout: 5000
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 15MB
 
 springdoc:
   api-docs:

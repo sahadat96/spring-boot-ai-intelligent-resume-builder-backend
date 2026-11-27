@@ -30,6 +30,10 @@ public class OpenApiConfiguration {
                     - **Refresh Token:** Delivered exclusively via `HttpOnly; SameSite=Lax` cookie (`refresh`) on `/api/v1/auth/login` and rotated on `/api/v1/auth/refresh`. Web clients must use `credentials: 'include'`.
                     - **Step-Up Auth (PSD2 SCA):** Sensitive endpoints (e.g., `DELETE /api/v1/auth/sessions/{id}`) require recent password verification via `POST /api/v1/auth/reauthenticate`. Stale sessions receive `403 Forbidden` with `WWW-Authenticate: StepUp`.
                     - **Rate Limiting & Tracing:** All `/api/**` responses emit `X-Trace-Id` and `X-RateLimit-*` headers (`60 req/min` anonymous IP, `300 req/min` authenticated). Errors follow RFC 7807 `application/problem+json`.
+
+                    ### Resume Analysis & Async Queue Contract
+                    - **Upload & Analyze Flow:** `POST /api/v1/resume-analysis/upload` -> `POST /api/v1/resume-analysis/{fileId}/analyze` (`202 Accepted` queued in Redis) -> poll `GET /api/v1/resume-analysis/{id}` until `status` is `COMPLETED` or `FAILED`.
+                    - **Free vs. Premium AI Layer:** All parsing (`PDFBox -> Tika -> Tesseract`) and ATS/Content/Formatting scoring are deterministic and free. Subscribed/premium users automatically receive post-analysis AI enrichment (`aiEnhanced: true`, `aiSuggestions`) without altering algorithmic scores.
                     """))
         .components(
             new Components()

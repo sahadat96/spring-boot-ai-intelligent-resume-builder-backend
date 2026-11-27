@@ -82,6 +82,15 @@ class OpenApiDocumentationTest {
     assertThat(response).contains("RegisterResponse");
     assertThat(response).contains("Step-Up Auth (PSD2 SCA)");
     assertThat(response).contains("WWW-Authenticate: StepUp");
+    assertThat(response).contains("/api/v1/resume-analysis/upload");
+    assertThat(response).contains("/api/v1/resume-analysis/{fileId}/analyze");
+    assertThat(response).contains("/api/v1/resume-analysis/{id}");
+    assertThat(response).contains("/api/v1/resume-analysis/history");
+    assertThat(response).contains("UploadResumeResponse");
+    assertThat(response).contains("ResumeAnalysisResponse");
+    assertThat(response).contains("ScoreDetailsDto");
+    assertThat(response).contains("AiSuggestionDto");
+    assertThat(response).contains("Resume Analysis & Async Queue Contract");
   }
 
   @Test

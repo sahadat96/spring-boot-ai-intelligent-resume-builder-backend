@@ -22,4 +22,15 @@ public class AsyncConfiguration {
     executor.initialize();
     return executor;
   }
+
+  @Bean(name = "analysisExecutor")
+  public Executor analysisExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(2);
+    executor.setMaxPoolSize(6);
+    executor.setQueueCapacity(200);
+    executor.setThreadNamePrefix("analysis-worker-");
+    executor.initialize();
+    return executor;
+  }
 }

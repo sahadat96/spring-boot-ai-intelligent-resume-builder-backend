@@ -17,7 +17,9 @@ WORKDIR /app
 # Fixed UID/GID 10001 allows least-privilege Docker Secrets (uid: "10001", mode: 0400)
 RUN addgroup -g 10001 -S appgroup \
     && adduser -u 10001 -S appuser -G appgroup \
-    && apk add --no-cache curl
+    && apk add --no-cache curl tesseract-ocr tesseract-ocr-data-eng
+
+ENV TESSDATA_PREFIX=/usr/share/tessdata
 
 COPY --from=builder /app/target/*.jar app.jar
 RUN chown appuser:appgroup app.jar
