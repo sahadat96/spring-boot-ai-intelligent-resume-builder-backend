@@ -344,7 +344,7 @@ public class IdentityService implements IdentityApi, DataParticipant {
             throw new DomainException(
                 ErrorCode.EMAIL_NOT_VERIFIED, "Verify your email before signing in.");
           }
-          return newFamily(current.id(), device, ip, agent);
+          return newFamily(current.id(), normalized, null, device, ip, agent);
         });
   }
 
@@ -374,7 +374,13 @@ public class IdentityService implements IdentityApi, DataParticipant {
           if (linkedUserId != null) {
             User current = repository.lockUser(linkedUserId);
             requireActive(current);
-            return newFamily(current.id(), device, ip, agent);
+            accounts.syncOAuthProfile(
+                current.id(),
+                verified.fullName(),
+                verified.firstName(),
+                verified.lastName(),
+                emailLocalPart(normalized));
+            return newFamily(current.id(), normalized, verified, device, ip, agent);
           }
 
           repository.lockEmail(normalized);
@@ -386,8 +392,14 @@ public class IdentityService implements IdentityApi, DataParticipant {
               repository.verify(current.id());
             }
             repository.linkOAuth(UuidV7.next(), current.id(), "GOOGLE", verified.subject());
+            accounts.syncOAuthProfile(
+                current.id(),
+                verified.fullName(),
+                verified.firstName(),
+                verified.lastName(),
+                emailLocalPart(normalized));
             events.publish(current.id(), "OAuthAccountLinked", Map.of("provider", "GOOGLE"));
-            return newFamily(current.id(), device, ip, agent);
+            return newFamily(current.id(), normalized, verified, device, ip, agent);
           }
 
           UUID userId = UuidV7.next();
@@ -397,10 +409,11 @@ public class IdentityService implements IdentityApi, DataParticipant {
           String displayName =
               (verified.fullName() != null && !verified.fullName().isBlank())
                   ? verified.fullName().strip()
-                  : normalized.substring(0, normalized.indexOf('@'));
-          accounts.initializeProfile(userId, displayName);
+                  : emailLocalPart(normalized);
+          accounts.initializeProfile(
+              userId, displayName, verified.firstName(), verified.lastName());
           events.publish(userId, "UserRegistered", Map.of("provider", "GOOGLE"));
-          return newFamily(userId, device, ip, agent);
+          return newFamily(userId, normalized, verified, device, ip, agent);
         });
   }
 
@@ -444,11 +457,12 @@ public class IdentityService implements IdentityApi, DataParticipant {
                   IdempotentCommand.hash(nextRefresh));
 
               return new RefreshOutcome(
-                  new AuthResult(
+                  buildAuthResult(
                       tokens.access(session.owner(), session.family()),
                       nextRefresh,
                       session.owner(),
-                      properties.security().accessMinutes() * 60),
+                      null,
+                      null),
                   false,
                   session.owner());
             });
@@ -615,7 +629,13 @@ public class IdentityService implements IdentityApi, DataParticipant {
     throw new DomainException(ErrorCode.INVALID_TOKEN, "Invalid or expired verification code.");
   }
 
-  private AuthResult newFamily(UUID owner, String device, String ip, String agent) {
+  private AuthResult newFamily(
+      UUID owner,
+      @Nullable String knownEmail,
+      IdentityPorts.Google.Verified oauthProfile,
+      String device,
+      String ip,
+      String agent) {
     UUID family = UuidV7.next();
     Instant expires = clock.instant().plus(Duration.ofDays(properties.security().refreshDays()));
     String refresh = opaque();
@@ -633,8 +653,74 @@ public class IdentityService implements IdentityApi, DataParticipant {
 
     recordRecentAuth(owner);
     events.publish(owner, "UserSignedIn", Map.of("familyId", family));
+    return buildAuthResult(tokens.access(owner, family), refresh, owner, knownEmail, oauthProfile);
+  }
+
+  private AuthResult buildAuthResult(
+      String accessToken,
+      String refreshToken,
+      UUID owner,
+      @Nullable String knownEmail,
+      IdentityPorts.Google.Verified oauthProfile) {
+    String resolvedEmail = blankToNull(knownEmail);
+    if (resolvedEmail == null) {
+      resolvedEmail = repository.byId(owner).map(User::email).orElse(null);
+    }
+
+    AccountApi.Profile profile = accounts != null ? accounts.profile(owner) : null;
+    String fullName = profile != null ? blankToNull(profile.fullName()) : null;
+    String firstName = profile != null ? blankToNull(profile.firstName()) : null;
+    String lastName = profile != null ? blankToNull(profile.lastName()) : null;
+
+    if (oauthProfile != null) {
+      if (fullName == null) {
+        fullName = blankToNull(oauthProfile.fullName());
+      }
+      if (firstName == null) {
+        firstName = blankToNull(oauthProfile.firstName());
+      }
+      if (lastName == null) {
+        lastName = blankToNull(oauthProfile.lastName());
+      }
+    }
+
+    if (fullName == null && (firstName != null || lastName != null)) {
+      if (firstName != null && lastName != null) {
+        fullName = firstName + " " + lastName;
+      } else {
+        fullName = firstName != null ? firstName : lastName;
+      }
+    }
+    if (firstName == null && fullName != null) {
+      String[] parts = fullName.split("\\s+", 2);
+      firstName = parts[0];
+      if (lastName == null && parts.length > 1) {
+        lastName = parts[1];
+      }
+    }
+
     return new AuthResult(
-        tokens.access(owner, family), refresh, owner, properties.security().accessMinutes() * 60);
+        accessToken,
+        refreshToken,
+        owner,
+        properties.security().accessMinutes() * 60,
+        resolvedEmail,
+        fullName,
+        firstName,
+        lastName);
+  }
+
+  private static String emailLocalPart(String email) {
+    int atIdx = email.indexOf('@');
+    return atIdx > 0 ? email.substring(0, atIdx) : email;
+  }
+
+  private static String blankToNull(String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = value.strip();
+    return trimmed.isEmpty() ? null : trimmed;
   }
 
   private void sendOtp(UUID owner, String email, String purpose) {
@@ -700,7 +786,19 @@ public class IdentityService implements IdentityApi, DataParticipant {
         ErrorCode.UNAUTHENTICATED, "Invalid email or password.");
   }
 
-  public record AuthResult(String accessToken, String refreshToken, UUID userId, int expiresIn) {}
+  public record AuthResult(
+      String accessToken,
+      String refreshToken,
+      UUID userId,
+      int expiresIn,
+      String email,
+      String fullName,
+      String firstName,
+      String lastName) {
+    public AuthResult(String accessToken, String refreshToken, UUID userId, int expiresIn) {
+      this(accessToken, refreshToken, userId, expiresIn, null, null, null, null);
+    }
+  }
 
   private record RefreshOutcome(AuthResult result, boolean reused, UUID owner) {}
 }

@@ -1,5 +1,6 @@
 package com.opticareer.app.modules.analysis.application;
 
+import com.opticareer.app.modules.analysis.AnalysisApi;
 import com.opticareer.app.modules.analysis.domain.AiSuggestion;
 import com.opticareer.app.modules.analysis.domain.AnalysisStatus;
 import com.opticareer.app.modules.analysis.infrastructure.persistence.ResumeAnalysisEntity;
@@ -20,7 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class ResumeAnalysisService implements DataParticipant {
+public class ResumeAnalysisService implements DataParticipant, AnalysisApi {
 
     private final DocumentParserService parser;
     private final ResumeAnalysisProcessor processor;
@@ -197,6 +198,52 @@ public class ResumeAnalysisService implements DataParticipant {
         ResumeAnalysisEntity entity = analysisRepo.findByIdAndOwnerId(id, ownerId)
             .orElseThrow(() -> DomainException.missing("Analysis"));
         analysisRepo.delete(entity);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public java.util.Optional<CompletedAnalysisSnapshot> latestCompletedAnalysis(UUID ownerId) {
+        return analysisRepo.findFirstByOwnerIdAndStatusOrderByCreatedAtDesc(ownerId, AnalysisStatus.COMPLETED.name())
+            .map(e -> new CompletedAnalysisSnapshot(
+                e.getId(),
+                e.getFileId(),
+                e.getFileName(),
+                e.getTargetRole(),
+                e.getOverallScore() != null ? e.getOverallScore() : 0,
+                e.getAtsScore() != null ? e.getAtsScore() : 0,
+                e.getContentScore() != null ? e.getContentScore() : 0,
+                e.getFormattingScore() != null ? e.getFormattingScore() : 0,
+                e.getJdMatchScore(),
+                e.getStrengths(),
+                e.getAreasToImprove(),
+                e.getKeywords(),
+                e.getMissingKeywords(),
+                e.getScoreDetails(),
+                e.getSections(),
+                e.getExtractedText(),
+                e.isOcrUsed(),
+                e.isAiEnhanced(),
+                e.updatedAt != null ? e.updatedAt : e.createdAt
+            ));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public java.util.Optional<LatestStatus> latestAnalysisStatus(UUID ownerId) {
+        return analysisRepo.findFirstByOwnerIdOrderByCreatedAtDesc(ownerId)
+            .map(e -> new LatestStatus(
+                e.getId(),
+                e.getFileId(),
+                e.getFileName(),
+                e.getStatus(),
+                e.updatedAt != null ? e.updatedAt : e.createdAt
+            ));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long completedAnalysisCount(UUID ownerId) {
+        return analysisRepo.countByOwnerIdAndStatus(ownerId, AnalysisStatus.COMPLETED.name());
     }
 
     @Override

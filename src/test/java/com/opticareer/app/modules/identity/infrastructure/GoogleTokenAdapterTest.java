@@ -58,6 +58,36 @@ class GoogleTokenAdapterTest {
     assertThat(verified.subject()).isEqualTo("google-sub-12345");
     assertThat(verified.email()).isEqualTo("sahadat@gmail.com");
     assertThat(verified.fullName()).isEqualTo("Sahadat Hossain");
+    assertThat(verified.firstName()).isNull();
+    assertThat(verified.lastName()).isNull();
+  }
+
+  @Test
+  @DisplayName("Extracts given_name and family_name and synthesizes fullName when name claim is absent")
+  void synthesizesFullNameFromGivenAndFamilyClaims() {
+    JwtDecoder decoder = mock(JwtDecoder.class);
+    Jwt jwt =
+        new Jwt(
+            "raw-token",
+            Instant.now(),
+            Instant.now().plusSeconds(3600),
+            Map.of("alg", "RS256"),
+            Map.of(
+                "iss", "https://accounts.google.com",
+                "aud", List.of(CLIENT_ID),
+                "sub", "google-sub-999",
+                "email", "sahadat@gmail.com",
+                "email_verified", true,
+                "given_name", "Sahadat",
+                "family_name", "Hossain"));
+    when(decoder.decode("given-family-jwt")).thenReturn(jwt);
+
+    GoogleTokenAdapter adapter = new GoogleTokenAdapter(props(CLIENT_ID), decoder);
+    IdentityPorts.Google.Verified verified = adapter.verify("given-family-jwt", null);
+
+    assertThat(verified.fullName()).isEqualTo("Sahadat Hossain");
+    assertThat(verified.firstName()).isEqualTo("Sahadat");
+    assertThat(verified.lastName()).isEqualTo("Hossain");
   }
 
   @Test

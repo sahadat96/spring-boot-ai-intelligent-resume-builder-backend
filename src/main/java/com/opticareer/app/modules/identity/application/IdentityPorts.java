@@ -26,9 +26,18 @@ public final class IdentityPorts {
   public interface Google {
     Verified verify(String token, String nonce);
 
-    record Verified(String subject, String email, String fullName) {
+    record Verified(
+        String subject,
+        String email,
+        String fullName,
+        String firstName,
+        String lastName) {
       public Verified(String subject, String email) {
-        this(subject, email, null);
+        this(subject, email, null, null, null);
+      }
+
+      public Verified(String subject, String email, String fullName) {
+        this(subject, email, fullName, null, null);
       }
     }
   }

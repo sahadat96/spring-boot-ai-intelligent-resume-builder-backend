@@ -127,7 +127,7 @@ public class AuthController {
       @Schema(description = "Status or informational message", example = "Operation completed successfully.")
       String message) {}
 
-  @Schema(name = "AuthResponse", description = "Authentication tokens and metadata returned on successful login or refresh")
+  @Schema(name = "AuthResponse", description = "Authentication tokens and profile identity returned on successful login, Google OAuth, or refresh")
   public record Access(
       @Schema(description = "Signed JWT access token", example = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...")
       String accessToken,
@@ -139,7 +139,19 @@ public class AuthController {
       int expiresIn,
 
       @Schema(description = "Unique user ID", example = "018f3a8b-1234-7000-8000-000000000001")
-      UUID userId) {}
+      UUID userId,
+
+      @Schema(description = "Authenticated user's email address", example = "sahadat@gmail.com")
+      String email,
+
+      @Schema(description = "User's full name (populated from Google OAuth or registration)", example = "Sahadat Hossain")
+      String fullName,
+
+      @Schema(description = "User's first / given name", example = "Sahadat")
+      String firstName,
+
+      @Schema(description = "User's last / family name", example = "Hossain")
+      String lastName) {}
 
   @Schema(name = "SessionInfo", description = "Details of an active login session or connected device")
   public record SessionInfo(
@@ -469,7 +481,16 @@ public class AuthController {
     return ResponseEntity.ok()
         .header(HttpHeaders.SET_COOKIE, cookie(r.refreshToken(), maxAge))
         .header(HttpHeaders.CACHE_CONTROL, "no-store")
-        .body(new Access(r.accessToken(), "Bearer", r.expiresIn(), r.userId()));
+        .body(
+            new Access(
+                r.accessToken(),
+                "Bearer",
+                r.expiresIn(),
+                r.userId(),
+                r.email(),
+                r.fullName(),
+                r.firstName(),
+                r.lastName()));
   }
 
   private String resolveDeviceLabel(String userAgent) {

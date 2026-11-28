@@ -91,6 +91,12 @@ class OpenApiDocumentationTest {
     assertThat(response).contains("ScoreDetailsDto");
     assertThat(response).contains("AiSuggestionDto");
     assertThat(response).contains("Resume Analysis & Async Queue Contract");
+    assertThat(response).contains("/api/v1/dashboard");
+    assertThat(response).contains("/api/v1/dashboard/career-targets");
+    assertThat(response).contains("DashboardResponse");
+    assertThat(response).contains("CareerSnapshotDto");
+    assertThat(response).contains("BiggestOpportunityDto");
+    assertThat(response).contains("BestFitRoleDto");
   }
 
   @Test

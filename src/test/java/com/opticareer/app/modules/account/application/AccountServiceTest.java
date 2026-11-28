@@ -37,6 +37,57 @@ class AccountServiceTest {
     AccountProfileEntity saved = captor.getValue();
     assertThat(saved.userId).isEqualTo(owner);
     assertThat(saved.fullName).isEqualTo("Emran Hossain");
+    assertThat(saved.firstName).isEqualTo("Emran");
+    assertThat(saved.lastName).isEqualTo("Hossain");
+  }
+
+  @Test
+  @DisplayName("initializeProfile preserves explicit Google given_name and family_name")
+  void initializeProfilePreservesGivenAndFamilyNames() {
+    UUID owner = UUID.randomUUID();
+    when(profiles.findById(owner)).thenReturn(Optional.empty());
+
+    service.initializeProfile(owner, "Mary Jane Watson", "Mary Jane", "Watson");
+
+    ArgumentCaptor<AccountProfileEntity> captor = ArgumentCaptor.forClass(AccountProfileEntity.class);
+    verify(profiles).save(captor.capture());
+    AccountProfileEntity saved = captor.getValue();
+    assertThat(saved.fullName).isEqualTo("Mary Jane Watson");
+    assertThat(saved.firstName).isEqualTo("Mary Jane");
+    assertThat(saved.lastName).isEqualTo("Watson");
+  }
+
+  @Test
+  @DisplayName("syncOAuthProfile replaces placeholder or blank names with Google name claims")
+  void syncOAuthProfileReplacesPlaceholderWithGoogleName() {
+    UUID owner = UUID.randomUUID();
+    AccountProfileEntity existing = new AccountProfileEntity(owner, "google.user");
+    existing.firstName = "";
+    existing.lastName = "";
+    when(profiles.findById(owner)).thenReturn(Optional.of(existing));
+
+    service.syncOAuthProfile(owner, "Sahadat Hossain", "Sahadat", "Hossain", "sahadat");
+
+    ArgumentCaptor<AccountProfileEntity> captor = ArgumentCaptor.forClass(AccountProfileEntity.class);
+    verify(profiles).save(captor.capture());
+    AccountProfileEntity saved = captor.getValue();
+    assertThat(saved.fullName).isEqualTo("Sahadat Hossain");
+    assertThat(saved.firstName).isEqualTo("Sahadat");
+    assertThat(saved.lastName).isEqualTo("Hossain");
+  }
+
+  @Test
+  @DisplayName("syncOAuthProfile does not overwrite an existing custom fullName")
+  void syncOAuthProfilePreservesCustomNameWhileFillingMissingParts() {
+    UUID owner = UUID.randomUUID();
+    AccountProfileEntity existing = new AccountProfileEntity(owner, "Custom User Name");
+    existing.firstName = "Custom";
+    existing.lastName = "Name";
+    when(profiles.findById(owner)).thenReturn(Optional.of(existing));
+
+    service.syncOAuthProfile(owner, "Sahadat Hossain", "Sahadat", "Hossain", "sahadat");
+
+    verify(profiles, never()).save(any());
   }
 
   @Test

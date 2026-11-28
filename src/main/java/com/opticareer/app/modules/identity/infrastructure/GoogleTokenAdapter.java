@@ -90,8 +90,27 @@ public class GoogleTokenAdapter implements IdentityPorts.Google {
       throw new DomainException(ErrorCode.INVALID_TOKEN, "Google token is missing subject or email.");
     }
 
-    String name = jwt.getClaimAsString("name");
-    return new Verified(subject, email, name);
+    String firstName = normalizeClaim(jwt.getClaimAsString("given_name"));
+    String lastName = normalizeClaim(jwt.getClaimAsString("family_name"));
+    String name = normalizeClaim(jwt.getClaimAsString("name"));
+    if (name == null) {
+      if (firstName != null && lastName != null) {
+        name = firstName + " " + lastName;
+      } else if (firstName != null) {
+        name = firstName;
+      } else {
+        name = lastName;
+      }
+    }
+    return new Verified(subject, email, name, firstName, lastName);
+  }
+
+  private static String normalizeClaim(String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = value.strip();
+    return trimmed.isEmpty() ? null : trimmed;
   }
 
   private JwtDecoder decoder() {

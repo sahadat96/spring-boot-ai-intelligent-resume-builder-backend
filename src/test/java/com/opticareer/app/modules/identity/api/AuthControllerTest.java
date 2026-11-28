@@ -593,7 +593,16 @@ class AuthControllerTest {
   void googleAuthSuccess() throws Exception {
     java.util.UUID userId = java.util.UUID.randomUUID();
     when(service.googleAuth(eq("google-id-jwt"), eq("nonce-xyz"), anyString(), anyString(), anyString()))
-        .thenReturn(new IdentityService.AuthResult("access-jwt-token", "refresh-opaque-token", userId, 600));
+        .thenReturn(
+            new IdentityService.AuthResult(
+                "access-jwt-token",
+                "refresh-opaque-token",
+                userId,
+                600,
+                "sahadat@gmail.com",
+                "Sahadat Hossain",
+                "Sahadat",
+                "Hossain"));
 
     String payload = """
         {
@@ -616,6 +625,10 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.tokenType").value("Bearer"))
         .andExpect(jsonPath("$.expiresIn").value(600))
         .andExpect(jsonPath("$.userId").value(userId.toString()))
+        .andExpect(jsonPath("$.email").value("sahadat@gmail.com"))
+        .andExpect(jsonPath("$.fullName").value("Sahadat Hossain"))
+        .andExpect(jsonPath("$.firstName").value("Sahadat"))
+        .andExpect(jsonPath("$.lastName").value("Hossain"))
         .andExpect(jsonPath("$.refreshToken").doesNotExist());
   }
 }

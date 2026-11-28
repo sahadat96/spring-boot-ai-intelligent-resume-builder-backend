@@ -82,7 +82,9 @@ class IdentityServiceGoogleOAuthTest {
   @DisplayName("First-time Google Sign-Up creates verified passwordless user, links OAuth, and provisions profile")
   void googleSignUpNewUser() {
     when(google.verify("id-tok", "nonce-123"))
-        .thenReturn(new IdentityPorts.Google.Verified("sub-new", "NewUser@Gmail.com", "Sahadat Hossain"));
+        .thenReturn(
+            new IdentityPorts.Google.Verified(
+                "sub-new", "NewUser@Gmail.com", "Sahadat Hossain", "Sahadat", "Hossain"));
     when(repository.oauthUser("GOOGLE", "sub-new")).thenReturn(Optional.empty());
     when(repository.byEmail("newuser@gmail.com")).thenReturn(Optional.empty());
 
@@ -91,21 +93,27 @@ class IdentityServiceGoogleOAuthTest {
 
     assertThat(result.accessToken()).isEqualTo("jwt-access-token");
     assertThat(result.refreshToken()).isNotBlank();
+    assertThat(result.email()).isEqualTo("newuser@gmail.com");
+    assertThat(result.fullName()).isEqualTo("Sahadat Hossain");
+    assertThat(result.firstName()).isEqualTo("Sahadat");
+    assertThat(result.lastName()).isEqualTo("Hossain");
     verify(repository).consumeOAuthChallenge(IdempotentCommand.hash("nonce-123"), now);
     verify(repository).create(argThat(u -> u.email().equals("newuser@gmail.com") && u.passwordHash() == null && u.verified()));
     verify(repository).linkOAuth(any(), eq(result.userId()), eq("GOOGLE"), eq("sub-new"));
-    verify(accounts).initializeProfile(result.userId(), "Sahadat Hossain");
+    verify(accounts).initializeProfile(result.userId(), "Sahadat Hossain", "Sahadat", "Hossain");
     verify(events).publish(eq(result.userId()), eq("UserRegistered"), anyMap());
   }
 
   @Test
-  @DisplayName("Returning Google user signs in directly without re-creating profile")
+  @DisplayName("Returning Google user signs in and syncs Google profile name without resetting full profile")
   void googleSignInReturningUser() {
     UUID existingId = UUID.randomUUID();
     User user = new User(existingId, "returning@gmail.com", null, now, "ACTIVE");
 
     when(google.verify("id-tok", null))
-        .thenReturn(new IdentityPorts.Google.Verified("sub-ret", "returning@gmail.com", "Sahadat"));
+        .thenReturn(
+            new IdentityPorts.Google.Verified(
+                "sub-ret", "returning@gmail.com", "Sahadat Hossain", "Sahadat", "Hossain"));
     when(repository.oauthUser("GOOGLE", "sub-ret")).thenReturn(Optional.of(existingId));
     when(repository.lockUser(existingId)).thenReturn(user);
 
@@ -113,18 +121,25 @@ class IdentityServiceGoogleOAuthTest {
         service.googleAuth("id-tok", null, "Chrome on macOS", "127.0.0.1", "Mozilla/5.0");
 
     assertThat(result.userId()).isEqualTo(existingId);
+    assertThat(result.fullName()).isEqualTo("Sahadat Hossain");
+    assertThat(result.firstName()).isEqualTo("Sahadat");
+    assertThat(result.lastName()).isEqualTo("Hossain");
     verify(repository, never()).create(any());
     verify(accounts, never()).initializeProfile(any(), any());
+    verify(accounts, never()).initializeProfile(any(), any(), any(), any());
+    verify(accounts).syncOAuthProfile(existingId, "Sahadat Hossain", "Sahadat", "Hossain", "returning");
   }
 
   @Test
-  @DisplayName("Existing email/password user links Google OAuth safely on first Google sign-in")
+  @DisplayName("Existing email/password user links Google OAuth safely and syncs profile name")
   void googleLinksExistingEmailUser() {
     UUID existingId = UUID.randomUUID();
     User existing = new User(existingId, "existing@gmail.com", "argon2-hash", now, "ACTIVE");
 
     when(google.verify("id-tok", null))
-        .thenReturn(new IdentityPorts.Google.Verified("sub-link", "existing@gmail.com", "Sahadat"));
+        .thenReturn(
+            new IdentityPorts.Google.Verified(
+                "sub-link", "existing@gmail.com", "Sahadat Hossain", "Sahadat", "Hossain"));
     when(repository.oauthUser("GOOGLE", "sub-link")).thenReturn(Optional.empty());
     when(repository.byEmail("existing@gmail.com")).thenReturn(Optional.of(existing));
     when(repository.lockUser(existingId)).thenReturn(existing);
@@ -133,8 +148,11 @@ class IdentityServiceGoogleOAuthTest {
         service.googleAuth("id-tok", null, "Safari on iOS", "127.0.0.1", "Mozilla/5.0");
 
     assertThat(result.userId()).isEqualTo(existingId);
+    assertThat(result.fullName()).isEqualTo("Sahadat Hossain");
+    assertThat(result.firstName()).isEqualTo("Sahadat");
     verify(repository, never()).create(any());
     verify(repository).linkOAuth(any(), eq(existingId), eq("GOOGLE"), eq("sub-link"));
+    verify(accounts).syncOAuthProfile(existingId, "Sahadat Hossain", "Sahadat", "Hossain", "existing");
     verify(events).publish(eq(existingId), eq("OAuthAccountLinked"), anyMap());
   }
 }

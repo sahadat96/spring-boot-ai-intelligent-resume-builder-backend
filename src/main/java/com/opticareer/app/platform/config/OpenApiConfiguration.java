@@ -34,6 +34,9 @@ public class OpenApiConfiguration {
                     ### Resume Analysis & Async Queue Contract
                     - **Upload & Analyze Flow:** `POST /api/v1/resume-analysis/upload` -> `POST /api/v1/resume-analysis/{fileId}/analyze` (`202 Accepted` queued in Redis) -> poll `GET /api/v1/resume-analysis/{id}` until `status` is `COMPLETED` or `FAILED`.
                     - **Free vs. Premium AI Layer:** All parsing (`PDFBox -> Tika -> Tesseract`) and ATS/Content/Formatting scoring are deterministic and free. Subscribed/premium users automatically receive post-analysis AI enrichment (`aiEnhanced: true`, `aiSuggestions`) without altering algorithmic scores.
+
+                    ### Workspace Dashboard Contract
+                    - **Aggregated Snapshot:** `GET /api/v1/dashboard` synthesizes the user's profile, billing plan, latest completed resume analysis, top best-fit roles, biggest match-lift opportunity, profile highlights, and recommended next moves in a single call.
                     """))
         .components(
             new Components()

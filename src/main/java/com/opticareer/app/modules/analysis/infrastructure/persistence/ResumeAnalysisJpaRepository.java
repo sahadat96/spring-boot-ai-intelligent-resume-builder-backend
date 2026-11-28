@@ -11,6 +11,9 @@ import org.springframework.data.jpa.repository.Query;
 public interface ResumeAnalysisJpaRepository extends JpaRepository<ResumeAnalysisEntity, UUID> {
     List<ResumeAnalysisEntity> findByOwnerIdOrderByCreatedAtDesc(UUID ownerId);
     Optional<ResumeAnalysisEntity> findByIdAndOwnerId(UUID id, UUID ownerId);
+    Optional<ResumeAnalysisEntity> findFirstByOwnerIdAndStatusOrderByCreatedAtDesc(UUID ownerId, String status);
+    Optional<ResumeAnalysisEntity> findFirstByOwnerIdOrderByCreatedAtDesc(UUID ownerId);
+    long countByOwnerIdAndStatus(UUID ownerId, String status);
     void deleteByOwnerId(UUID ownerId);
 
     @Modifying
